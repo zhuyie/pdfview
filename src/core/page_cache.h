@@ -9,6 +9,7 @@ namespace core {
 
 struct PageCacheSlotState {
   bool loaded = false;
+  bool pending = false;
   float render_scale = 0.0f;
 };
 
@@ -42,11 +43,16 @@ PageCacheUpdate plan_page_cache_update(const PageIndexRange& keep_range,
 PageRenderPlan plan_page_rendering(const PageIndexRange& keep_range,
                                    const std::vector<PageCacheSlotState>& states,
                                    const std::vector<ViewRect>& page_frames,
+                                   const ViewRect& visible_rect,
                                    float target_render_scale);
 
 void mark_page_cache_rendered(std::vector<PageCacheSlotState>* states,
                               int page_index,
                               float render_scale);
+
+void mark_page_cache_requested(std::vector<PageCacheSlotState>* states,
+                               int page_index,
+                               float render_scale);
 
 void mark_page_cache_discarded(std::vector<PageCacheSlotState>* states, int page_index);
 

@@ -2,8 +2,12 @@
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <dispatch/dispatch.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -13,8 +17,9 @@
 
 struct PageRenderCacheEntry {
   NSImage* image;
+  long long requestId;
 
-  PageRenderCacheEntry() : image(nil) {}
+  PageRenderCacheEntry() : image(nil), requestId(0) {}
 };
 
 @interface FlippedDocumentView : NSView
@@ -57,8 +62,12 @@ struct PageRenderCacheEntry {
 - (pdfview::core::PageCachePlan)pageCachePlanForVisibleRect:(const pdfview::core::ViewRect&)visibleRect;
 - (pdfview::core::PageRenderPlan)renderPlanForVisibleRect:(const pdfview::core::ViewRect&)visibleRect
                                             deviceScale:(CGFloat)deviceScale;
+- (BOOL)isRenderRequestCurrent:(int)pageIndex
+                   renderScale:(float)renderScale
+                     requestId:(long long)requestId;
 - (void)markPageDiscarded:(int)pageIndex;
 - (void)markPageRendered:(int)pageIndex renderScale:(float)renderScale;
+- (void)markPageRequested:(int)pageIndex renderScale:(float)renderScale requestId:(long long)requestId;
 - (void)setManualScale:(float)scale;
 - (void)setUseFitScale:(BOOL)useFitScale;
 
@@ -77,6 +86,24 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   result.width = rect.size.width;
   result.height = rect.size.height;
   return result;
+}
+
+}  // namespace
+
+namespace {
+
+bool RenderProfilingEnabled() {
+  static const bool enabled = []() -> bool {
+    const char* value = std::getenv("PDFVIEW_PROFILE_RENDER");
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+  }();
+  return enabled;
+}
+
+double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
+  return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
+             std::chrono::steady_clock::now() - start)
+      .count();
 }
 
 }  // namespace
@@ -149,6 +176,7 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   pdfview::core::invalidate_page_cache(&pageCacheStates_);
   for (size_t pageIndex = 0; pageIndex < pageCache_.size(); ++pageIndex) {
     pageCache_[pageIndex].image = nil;
+    pageCache_[pageIndex].requestId = 0;
     if (pageImageViews_[pageIndex] != nil) {
       [pageImageViews_[pageIndex] setImage:nil];
     }
@@ -183,7 +211,20 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   return pdfview::core::plan_page_rendering(cachePlan.preload_range,
                                             pageCacheStates_,
                                             pageFrames_,
+                                            visibleRect,
                                             renderScale);
+}
+
+- (BOOL)isRenderRequestCurrent:(int)pageIndex
+                   renderScale:(float)renderScale
+                     requestId:(long long)requestId {
+  if (pageIndex < 0 || pageIndex >= static_cast<int>(pageCache_.size())) {
+    return NO;
+  }
+
+  const PageRenderCacheEntry& cacheEntry = pageCache_[pageIndex];
+  const pdfview::core::PageCacheSlotState& state = pageCacheStates_[pageIndex];
+  return cacheEntry.requestId == requestId && state.pending && state.render_scale == renderScale;
 }
 
 - (void)markPageDiscarded:(int)pageIndex {
@@ -192,6 +233,7 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   }
 
   pageCache_[pageIndex].image = nil;
+  pageCache_[pageIndex].requestId = 0;
   pdfview::core::mark_page_cache_discarded(&pageCacheStates_, pageIndex);
 }
 
@@ -200,8 +242,18 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
     return;
   }
 
+  pageCache_[pageIndex].requestId = 0;
   pdfview::core::mark_page_cache_rendered(&pageCacheStates_, pageIndex, renderScale);
   lastRenderScale_ = renderScale;
+}
+
+- (void)markPageRequested:(int)pageIndex renderScale:(float)renderScale requestId:(long long)requestId {
+  if (pageIndex < 0 || pageIndex >= static_cast<int>(pageCache_.size())) {
+    return;
+  }
+
+  pageCache_[pageIndex].requestId = requestId;
+  pdfview::core::mark_page_cache_requested(&pageCacheStates_, pageIndex, renderScale);
 }
 
 - (void)setManualScale:(float)scale {
@@ -230,6 +282,12 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
 - (void)renderTabContext:(PDFTabContext*)context;
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context;
+- (void)applyRenderedPage:(const pdfview::core::RenderPageResult&)renderResult
+               forRequest:(const pdfview::core::PageRenderRequest&)request
+                requestId:(long long)requestId
+                  context:(PDFTabContext*)context
+                   pdfMs:(double)pdfMilliseconds;
+- (BOOL)isContextActive:(PDFTabContext*)context;
 - (float)fitScaleForContext:(PDFTabContext*)context;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
@@ -256,6 +314,8 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   NSButton* zoomInButton_;
   BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
+  dispatch_queue_t renderQueue_;
+  long long nextRenderRequestId_;
   id keyMonitor_;
   int argc_;
   const char** argv_;
@@ -268,6 +328,8 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
     argv_ = argv;
     keyMonitor_ = nil;
     zoomComboBoxEditing_ = NO;
+    renderQueue_ = dispatch_queue_create("com.pdfview.render", DISPATCH_QUEUE_SERIAL);
+    nextRenderRequestId_ = 1;
     tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
@@ -642,11 +704,16 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   return nil;
 }
 
+- (BOOL)isContextActive:(PDFTabContext*)context {
+  return context != nil && context == [self activeTabContext];
+}
+
 - (void)renderTabContext:(PDFTabContext*)context {
   if (context == nil || !context->document_) {
     return;
   }
 
+  const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
   const CGFloat deviceScale = [self deviceScaleFactor];
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
   const float logicalScale = [context currentScaleForViewportWidth:clipSize.width];
@@ -658,6 +725,7 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 
   const pdfview::core::PageLayoutResult layoutResult =
       [context layoutPagesForViewportSize:clipSize];
+  const double layoutMilliseconds = MillisecondsSince(passStart);
 
   const int pageCount = static_cast<int>(context->pageFrames_.size());
   for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
@@ -681,7 +749,19 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
                           0,
                           layoutResult.document_width,
                           layoutResult.document_height)];
-  [self updateVisiblePagesForContext:context];
+  if ([self isContextActive:context]) {
+    [self updateVisiblePagesForContext:context];
+  }
+
+  if (RenderProfilingEnabled()) {
+    const double totalMilliseconds = MillisecondsSince(passStart);
+    std::fprintf(stderr,
+                 "[pdfview] render_tab layout_ms=%.2f total_ms=%.2f pages=%d scale=%.3f\n",
+                 layoutMilliseconds,
+                 totalMilliseconds,
+                 pageCount,
+                 renderScale);
+  }
 }
 
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context {
@@ -689,6 +769,18 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
     return;
   }
 
+  if (![self isContextActive:context]) {
+    return;
+  }
+
+  const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
+  double pdfRenderMilliseconds = 0.0;
+  double imageDecodeMilliseconds = 0.0;
+  double imageApplyMilliseconds = 0.0;
+  int renderedPageCount = 0;
+  int discardedPageCount = 0;
+  int keptPageCount = 0;
+  long long renderedPixelCount = 0;
   const pdfview::core::ViewRect visibleRect =
       ViewRectFromNSRect([[context->scrollView_ contentView] bounds]);
   const CGFloat deviceScale = [self deviceScaleFactor];
@@ -697,11 +789,14 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 
   for (size_t discardIndex = 0; discardIndex < renderPlan.pages_to_discard.size(); ++discardIndex) {
     const int pageIndex = renderPlan.pages_to_discard[discardIndex];
+    const std::chrono::steady_clock::time_point applyStart = std::chrono::steady_clock::now();
     [context markPageDiscarded:pageIndex];
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView != nil) {
       [imageView setImage:nil];
     }
+    imageApplyMilliseconds += MillisecondsSince(applyStart);
+    discardedPageCount += 1;
   }
 
   for (size_t renderIndex = 0; renderIndex < renderPlan.render_requests.size(); ++renderIndex) {
@@ -712,27 +807,123 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
       continue;
     }
 
-    const pdfview::core::RenderPageResult renderResult =
-        context->document_->render_page(pageIndex, request.render_scale);
-    if (!renderResult.ok()) {
-      [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
-                                                    pageIndex + 1,
-                                                    renderResult.error.c_str()]];
-      continue;
-    }
+    const long long requestId = nextRenderRequestId_++;
+    [context markPageRequested:pageIndex renderScale:request.render_scale requestId:requestId];
+    const pdfview::core::DocumentPtr document = context->document_;
+    PDFTabContext* retainedContext = context;
+    const pdfview::core::PageRenderRequest requestCopy = request;
+    dispatch_async(renderQueue_, ^{
+      __block BOOL shouldRender = NO;
+      dispatch_sync(dispatch_get_main_queue(), ^{
+        shouldRender = [retainedContext isRenderRequestCurrent:requestCopy.page_index
+                                                   renderScale:requestCopy.render_scale
+                                                     requestId:requestId];
+      });
+      if (!shouldRender) {
+        if (RenderProfilingEnabled()) {
+          std::fprintf(stderr,
+                       "[pdfview] page_skip page=%d scale=%.3f request=%lld reason=stale_before_render\n",
+                       requestCopy.page_index,
+                       requestCopy.render_scale,
+                       requestId);
+        }
+        return;
+      }
 
-    context->pageCache_[pageIndex].image =
-        [self imageFromBitmap:renderResult.bitmap
-                  displaySize:NSMakeSize(request.display_width, request.display_height)];
-    [imageView setImage:context->pageCache_[pageIndex].image];
-    [context markPageRendered:pageIndex renderScale:request.render_scale];
+      const std::chrono::steady_clock::time_point pdfRenderStart = std::chrono::steady_clock::now();
+      const pdfview::core::RenderPageResult renderResult =
+          document->render_page(requestCopy.page_index, requestCopy.render_scale);
+      const double pdfMilliseconds = MillisecondsSince(pdfRenderStart);
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [self applyRenderedPage:renderResult
+                     forRequest:requestCopy
+                      requestId:requestId
+                        context:retainedContext
+                         pdfMs:pdfMilliseconds];
+      });
+    });
+
+    pdfRenderMilliseconds += 0.0;
+    renderedPageCount += 1;
   }
 
   for (int pageIndex = renderPlan.keep_range.start; pageIndex < renderPlan.keep_range.end; ++pageIndex) {
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView != nil && context->pageCache_[pageIndex].image != nil) {
+      const std::chrono::steady_clock::time_point applyStart = std::chrono::steady_clock::now();
       [imageView setImage:context->pageCache_[pageIndex].image];
+      imageApplyMilliseconds += MillisecondsSince(applyStart);
+      keptPageCount += 1;
     }
+  }
+
+  if (RenderProfilingEnabled()) {
+    const double totalMilliseconds = MillisecondsSince(passStart);
+    std::fprintf(stderr,
+                 "[pdfview] visible_update total_ms=%.2f pdf_ms=%.2f image_decode_ms=%.2f "
+                 "image_apply_ms=%.2f rendered=%d discarded=%d kept=%d pixels=%lld keep_range=%d..%d\n",
+                 totalMilliseconds,
+                 pdfRenderMilliseconds,
+                 imageDecodeMilliseconds,
+                 imageApplyMilliseconds,
+                 renderedPageCount,
+                 discardedPageCount,
+                 keptPageCount,
+                 renderedPixelCount,
+                 renderPlan.keep_range.start,
+                 renderPlan.keep_range.end);
+  }
+}
+
+- (void)applyRenderedPage:(const pdfview::core::RenderPageResult&)renderResult
+               forRequest:(const pdfview::core::PageRenderRequest&)request
+                requestId:(long long)requestId
+                  context:(PDFTabContext*)context
+                   pdfMs:(double)pdfMilliseconds {
+  if (context == nil ||
+      request.page_index < 0 ||
+      request.page_index >= static_cast<int>(context->pageCache_.size())) {
+    return;
+  }
+
+  PageRenderCacheEntry& cacheEntry = context->pageCache_[request.page_index];
+  if (cacheEntry.requestId != requestId) {
+    return;
+  }
+
+  if (!renderResult.ok()) {
+    [context markPageDiscarded:request.page_index];
+    [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
+                                                  request.page_index + 1,
+                                                  renderResult.error.c_str()]];
+    return;
+  }
+
+  const std::chrono::steady_clock::time_point imageDecodeStart = std::chrono::steady_clock::now();
+  cacheEntry.image =
+      [self imageFromBitmap:renderResult.bitmap
+                displaySize:NSMakeSize(request.display_width, request.display_height)];
+  const double imageDecodeMilliseconds = MillisecondsSince(imageDecodeStart);
+
+  double imageApplyMilliseconds = 0.0;
+  NSImageView* imageView = context->pageImageViews_[request.page_index];
+  if (imageView != nil) {
+    const std::chrono::steady_clock::time_point imageApplyStart = std::chrono::steady_clock::now();
+    [imageView setImage:cacheEntry.image];
+    imageApplyMilliseconds = MillisecondsSince(imageApplyStart);
+  }
+
+  [context markPageRendered:request.page_index renderScale:request.render_scale];
+
+  if (RenderProfilingEnabled()) {
+    std::fprintf(stderr,
+                 "[pdfview] page_render page=%d scale=%.3f pdf_ms=%.2f decode_ms=%.2f apply_ms=%.2f pixels=%d\n",
+                 request.page_index,
+                 request.render_scale,
+                 pdfMilliseconds,
+                 imageDecodeMilliseconds,
+                 imageApplyMilliseconds,
+                 renderResult.bitmap.width * renderResult.bitmap.height);
   }
 }
 
@@ -831,8 +1022,8 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
   PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
-  [self updateVisiblePagesForContext:context];
   [self updateCurrentPageFromScrollForContext:context];
+  [self updateVisiblePagesForContext:context];
 }
 
 - (void)installKeyMonitor {
