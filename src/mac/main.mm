@@ -625,13 +625,14 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   const float logicalScale = [self currentScaleForContext:context];
   const CGFloat deviceScale = [self deviceScaleFactor];
   const float renderScale = logicalScale * static_cast<float>(deviceScale);
-  const pdfview::core::PageCacheUpdate cacheUpdate =
-      pdfview::core::plan_page_cache_update(cachePlan.preload_range,
-                                            context->pageCacheStates_,
-                                            renderScale);
+  const pdfview::core::PageRenderPlan renderPlan =
+      pdfview::core::plan_page_rendering(cachePlan.preload_range,
+                                         context->pageCacheStates_,
+                                         context->pageFrames_,
+                                         renderScale);
 
-  for (size_t discardIndex = 0; discardIndex < cacheUpdate.pages_to_discard.size(); ++discardIndex) {
-    const int pageIndex = cacheUpdate.pages_to_discard[discardIndex];
+  for (size_t discardIndex = 0; discardIndex < renderPlan.pages_to_discard.size(); ++discardIndex) {
+    const int pageIndex = renderPlan.pages_to_discard[discardIndex];
     context->pageCache_[pageIndex].image = nil;
     pdfview::core::mark_page_cache_discarded(&context->pageCacheStates_, pageIndex);
     NSImageView* imageView = context->pageImageViews_[pageIndex];
@@ -640,16 +641,16 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
     }
   }
 
-  for (size_t renderIndex = 0; renderIndex < cacheUpdate.pages_to_render.size(); ++renderIndex) {
-    const int pageIndex = cacheUpdate.pages_to_render[renderIndex];
-    const pdfview::core::ViewRect& pageFrame = context->pageFrames_[pageIndex];
+  for (size_t renderIndex = 0; renderIndex < renderPlan.render_requests.size(); ++renderIndex) {
+    const pdfview::core::PageRenderRequest& request = renderPlan.render_requests[renderIndex];
+    const int pageIndex = request.page_index;
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
       continue;
     }
 
     const pdfview::core::RenderPageResult renderResult =
-        context->document_->render_page(pageIndex, renderScale);
+        context->document_->render_page(pageIndex, request.render_scale);
     if (!renderResult.ok()) {
       [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
                                                     pageIndex + 1,
@@ -659,12 +660,14 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 
     context->pageCache_[pageIndex].image =
         [self imageFromBitmap:renderResult.bitmap
-                  displaySize:NSMakeSize(pageFrame.width, pageFrame.height)];
+                  displaySize:NSMakeSize(request.display_width, request.display_height)];
     [imageView setImage:context->pageCache_[pageIndex].image];
-    pdfview::core::mark_page_cache_rendered(&context->pageCacheStates_, pageIndex, renderScale);
+    pdfview::core::mark_page_cache_rendered(&context->pageCacheStates_,
+                                            pageIndex,
+                                            request.render_scale);
   }
 
-  for (int pageIndex = cacheUpdate.keep_range.start; pageIndex < cacheUpdate.keep_range.end; ++pageIndex) {
+  for (int pageIndex = renderPlan.keep_range.start; pageIndex < renderPlan.keep_range.end; ++pageIndex) {
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView != nil && context->pageCache_[pageIndex].image != nil) {
       [imageView setImage:context->pageCache_[pageIndex].image];

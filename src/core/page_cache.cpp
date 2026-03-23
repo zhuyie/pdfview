@@ -44,6 +44,33 @@ PageCacheUpdate plan_page_cache_update(const PageIndexRange& keep_range,
   return update;
 }
 
+PageRenderPlan plan_page_rendering(const PageIndexRange& keep_range,
+                                   const std::vector<PageCacheSlotState>& states,
+                                   const std::vector<ViewRect>& page_frames,
+                                   float target_render_scale) {
+  PageRenderPlan plan;
+  const PageCacheUpdate update =
+      plan_page_cache_update(keep_range, states, target_render_scale);
+  plan.keep_range = update.keep_range;
+  plan.pages_to_discard = update.pages_to_discard;
+
+  for (size_t index = 0; index < update.pages_to_render.size(); ++index) {
+    const int page_index = update.pages_to_render[index];
+    if (page_index < 0 || page_index >= static_cast<int>(page_frames.size())) {
+      continue;
+    }
+
+    PageRenderRequest request;
+    request.page_index = page_index;
+    request.render_scale = target_render_scale;
+    request.display_width = page_frames[page_index].width;
+    request.display_height = page_frames[page_index].height;
+    plan.render_requests.push_back(request);
+  }
+
+  return plan;
+}
+
 void mark_page_cache_rendered(std::vector<PageCacheSlotState>* states,
                               int page_index,
                               float render_scale) {
