@@ -19,6 +19,7 @@ endif()
 add_library(pdfview_core
     src/core/document.cpp
     src/core/pdfium_document.cpp
+    src/core/viewport.cpp
 )
 
 target_include_directories(pdfview_core PUBLIC src)

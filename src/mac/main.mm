@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/document.h"
+#include "core/viewport.h"
 
 struct PageRenderCacheEntry {
   NSImage* image;
@@ -37,7 +38,7 @@ struct PageRenderCacheEntry {
   std::vector<pdfview::core::PageSize> pageSizes_;
   std::vector<NSImageView*> pageImageViews_;
   std::vector<PageRenderCacheEntry> pageCache_;
-  std::vector<NSRect> pageFrames_;
+  std::vector<pdfview::core::ViewRect> pageFrames_;
   int currentPage_;
   float manualScale_;
   float lastRenderScale_;
@@ -50,6 +51,23 @@ struct PageRenderCacheEntry {
 - (NSString*)tabTitle;
 
 @end
+
+namespace {
+
+NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
+  return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
+}
+
+pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
+  pdfview::core::ViewRect result;
+  result.x = rect.origin.x;
+  result.y = rect.origin.y;
+  result.width = rect.size.width;
+  result.height = rect.size.height;
+  return result;
+}
+
+}  // namespace
 
 @implementation PDFTabContext
 
@@ -69,7 +87,7 @@ struct PageRenderCacheEntry {
     pageSizes_.resize(pageCount);
     pageImageViews_.resize(pageCount, nil);
     pageCache_.resize(pageCount);
-    pageFrames_.resize(pageCount, NSZeroRect);
+    pageFrames_.resize(pageCount);
     for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
       pageSizes_[pageIndex] = document_->page_size(pageIndex);
     }
@@ -543,10 +561,6 @@ struct PageRenderCacheEntry {
   const CGFloat sideMargin = 16.0f;
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
 
-  CGFloat documentWidth = clipSize.width;
-  CGFloat maxPageWidth = 0.0f;
-  CGFloat cursorY = topMargin;
-
   if (std::abs(context->lastRenderScale_ - renderScale) > 0.001f) {
     for (size_t pageIndex = 0; pageIndex < context->pageCache_.size(); ++pageIndex) {
       context->pageCache_[pageIndex].image = nil;
@@ -558,14 +572,24 @@ struct PageRenderCacheEntry {
     context->lastRenderScale_ = renderScale;
   }
 
-  const int pageCount = static_cast<int>(context->pageSizes_.size());
+  pdfview::core::PageLayoutConfig layoutConfig;
+  layoutConfig.viewport_width = clipSize.width;
+  layoutConfig.viewport_height = clipSize.height;
+  layoutConfig.zoom = logicalScale;
+  layoutConfig.top_margin = topMargin;
+  layoutConfig.side_margin = sideMargin;
+  layoutConfig.page_gap = pageGap;
+
+  const pdfview::core::PageLayoutResult layoutResult =
+      pdfview::core::compute_continuous_page_layout(context->pageSizes_, layoutConfig);
+  context->pageFrames_ = layoutResult.page_frames;
+
+  const int pageCount = static_cast<int>(context->pageFrames_.size());
   for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
-    const pdfview::core::PageSize pageSize = context->pageSizes_[pageIndex];
-    const CGFloat displayWidth = pageSize.width * logicalScale;
-    const CGFloat displayHeight = pageSize.height * logicalScale;
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
-      imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(0, 0, displayWidth, displayHeight)];
+      imageView = [[NSImageView alloc]
+          initWithFrame:NSRectFromViewRect(context->pageFrames_[pageIndex])];
       [imageView setImageAlignment:NSImageAlignCenter];
       [imageView setImageScaling:NSImageScaleNone];
       [imageView setWantsLayer:YES];
@@ -574,23 +598,14 @@ struct PageRenderCacheEntry {
       [context->documentView_ addSubview:imageView];
     }
 
-    const CGFloat pageX = std::max((clipSize.width - displayWidth) * 0.5, sideMargin);
-    const NSRect pageFrame = NSMakeRect(pageX, cursorY, displayWidth, displayHeight);
-    [imageView setFrame:pageFrame];
-    context->pageFrames_[pageIndex] = pageFrame;
-
-    cursorY += displayHeight + pageGap;
-    documentWidth =
-        std::max(documentWidth, pageFrame.origin.x + pageFrame.size.width + sideMargin);
-    maxPageWidth = std::max(maxPageWidth, displayWidth);
+    [imageView setFrame:NSRectFromViewRect(context->pageFrames_[pageIndex])];
   }
 
-  const CGFloat documentHeight = std::max(cursorY, clipSize.height);
   [context->documentView_
       setFrame:NSMakeRect(0,
                           0,
-                          std::max(documentWidth, maxPageWidth + sideMargin * 2.0f),
-                          documentHeight)];
+                          layoutResult.document_width,
+                          layoutResult.document_height)];
   [self updateVisiblePagesForContext:context];
 }
 
@@ -599,24 +614,21 @@ struct PageRenderCacheEntry {
     return;
   }
 
-  const NSRect visibleRect = [[context->scrollView_ contentView] bounds];
-  NSRect preloadRect = NSInsetRect(visibleRect, 0.0f, -visibleRect.size.height * 0.5f);
-  if (preloadRect.size.height < visibleRect.size.height) {
-    preloadRect.size.height = visibleRect.size.height;
-  }
+  const pdfview::core::ViewRect visibleRect =
+      ViewRectFromNSRect([[context->scrollView_ contentView] bounds]);
+  const pdfview::core::ViewRect preloadRect =
+      pdfview::core::expand_rect(visibleRect, 0.0f, visibleRect.height * 0.5f);
 
   const float logicalScale = [self currentScaleForContext:context];
   const CGFloat deviceScale = [self deviceScaleFactor];
   const float renderScale = logicalScale * static_cast<float>(deviceScale);
+  const pdfview::core::PageIndexRange preloadRange =
+      pdfview::core::find_intersecting_pages(context->pageFrames_, preloadRect);
 
-  for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
-    const NSRect pageFrame = context->pageFrames_[pageIndex];
+  for (int pageIndex = preloadRange.start; pageIndex < preloadRange.end; ++pageIndex) {
+    const pdfview::core::ViewRect& pageFrame = context->pageFrames_[pageIndex];
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
-      continue;
-    }
-
-    if (!NSIntersectsRect(pageFrame, preloadRect)) {
       continue;
     }
 
@@ -636,12 +648,12 @@ struct PageRenderCacheEntry {
     }
 
     cacheEntry.image = [self imageFromBitmap:renderResult.bitmap
-                                 displaySize:pageFrame.size];
+                                 displaySize:NSMakeSize(pageFrame.width, pageFrame.height)];
     cacheEntry.renderScale = renderScale;
     [imageView setImage:cacheEntry.image];
   }
 
-  [self discardCachedPagesOutsideRect:preloadRect context:context];
+  [self discardCachedPagesOutsideRect:NSRectFromViewRect(preloadRect) context:context];
 }
 
 - (void)discardCachedPagesOutsideRect:(NSRect)keepRect context:(PDFTabContext*)context {
@@ -650,7 +662,7 @@ struct PageRenderCacheEntry {
   }
 
   for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
-    if (NSIntersectsRect(context->pageFrames_[pageIndex], keepRect)) {
+    if (NSIntersectsRect(NSRectFromViewRect(context->pageFrames_[pageIndex]), keepRect)) {
       continue;
     }
 
@@ -668,21 +680,8 @@ struct PageRenderCacheEntry {
     return 1.0f;
   }
 
-  float maxPageWidth = 0.0f;
-  for (int pageIndex = 0; pageIndex < context->document_->page_count(); ++pageIndex) {
-    const pdfview::core::PageSize pageSize = context->document_->page_size(pageIndex);
-    maxPageWidth = std::max(maxPageWidth, pageSize.width);
-  }
-
-  if (maxPageWidth <= 0.0f) {
-    return 1.0f;
-  }
-
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
-  const float horizontalPadding = 48.0f;
-  const float targetWidth = std::max(clipSize.width - horizontalPadding, 120.0);
-  const float scale = targetWidth / maxPageWidth;
-  return std::max(0.25f, scale);
+  return pdfview::core::compute_fit_scale(context->pageSizes_, clipSize.width, 48.0f, 0.25f);
 }
 
 - (float)currentScaleForContext:(PDFTabContext*)context {
@@ -754,7 +753,7 @@ struct PageRenderCacheEntry {
     return;
   }
 
-  const NSRect pageFrame = context->pageFrames_[context->currentPage_];
+  const NSRect pageFrame = NSRectFromViewRect(context->pageFrames_[context->currentPage_]);
   [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
   [self updateVisiblePagesForContext:context];
 }
@@ -765,21 +764,8 @@ struct PageRenderCacheEntry {
   }
 
   const NSRect visibleRect = [[context->scrollView_ contentView] bounds];
-  const CGFloat visibleCenterY = visibleRect.origin.y + visibleRect.size.height * 0.5f;
-
-  int nearestPage = 0;
-  CGFloat nearestDistance = CGFLOAT_MAX;
-  for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
-    const NSRect pageFrame = context->pageFrames_[pageIndex];
-    const CGFloat pageCenterY = pageFrame.origin.y + pageFrame.size.height * 0.5f;
-    const CGFloat distance = std::abs(pageCenterY - visibleCenterY);
-    if (distance < nearestDistance) {
-      nearestDistance = distance;
-      nearestPage = pageIndex;
-    }
-  }
-
-  context->currentPage_ = nearestPage;
+  context->currentPage_ = pdfview::core::find_nearest_page_to_viewport_center(
+      context->pageFrames_, visibleRect.origin.y, visibleRect.size.height);
 }
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
