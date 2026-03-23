@@ -135,7 +135,8 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
 - (void)renderTabContext:(PDFTabContext*)context;
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context;
-- (void)discardCachedPagesOutsideRect:(NSRect)keepRect context:(PDFTabContext*)context;
+- (void)discardCachedPagesOutsideRange:(const pdfview::core::PageIndexRange&)keepRange
+                               context:(PDFTabContext*)context;
 - (float)fitScaleForContext:(PDFTabContext*)context;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
@@ -616,16 +617,18 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 
   const pdfview::core::ViewRect visibleRect =
       ViewRectFromNSRect([[context->scrollView_ contentView] bounds]);
-  const pdfview::core::ViewRect preloadRect =
-      pdfview::core::expand_rect(visibleRect, 0.0f, visibleRect.height * 0.5f);
+  const pdfview::core::PageCachePlan cachePlan =
+      pdfview::core::compute_page_cache_plan(context->pageFrames_,
+                                             visibleRect,
+                                             visibleRect.height * 0.5f);
 
   const float logicalScale = [self currentScaleForContext:context];
   const CGFloat deviceScale = [self deviceScaleFactor];
   const float renderScale = logicalScale * static_cast<float>(deviceScale);
-  const pdfview::core::PageIndexRange preloadRange =
-      pdfview::core::find_intersecting_pages(context->pageFrames_, preloadRect);
 
-  for (int pageIndex = preloadRange.start; pageIndex < preloadRange.end; ++pageIndex) {
+  for (int pageIndex = cachePlan.preload_range.start;
+       pageIndex < cachePlan.preload_range.end;
+       ++pageIndex) {
     const pdfview::core::ViewRect& pageFrame = context->pageFrames_[pageIndex];
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
@@ -653,16 +656,17 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
     [imageView setImage:cacheEntry.image];
   }
 
-  [self discardCachedPagesOutsideRect:NSRectFromViewRect(preloadRect) context:context];
+  [self discardCachedPagesOutsideRange:cachePlan.preload_range context:context];
 }
 
-- (void)discardCachedPagesOutsideRect:(NSRect)keepRect context:(PDFTabContext*)context {
+- (void)discardCachedPagesOutsideRange:(const pdfview::core::PageIndexRange&)keepRange
+                               context:(PDFTabContext*)context {
   if (context == nil) {
     return;
   }
 
   for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
-    if (NSIntersectsRect(NSRectFromViewRect(context->pageFrames_[pageIndex]), keepRect)) {
+    if (!keepRange.empty() && pageIndex >= keepRange.start && pageIndex < keepRange.end) {
       continue;
     }
 

@@ -36,6 +36,13 @@ struct PageIndexRange {
   bool empty() const { return start >= end; }
 };
 
+struct PageCachePlan {
+  ViewRect visible_rect;
+  ViewRect preload_rect;
+  PageIndexRange visible_range;
+  PageIndexRange preload_range;
+};
+
 PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& page_sizes,
                                                 const PageLayoutConfig& config);
 
@@ -48,6 +55,10 @@ ViewRect expand_rect(const ViewRect& rect, float expand_x, float expand_y);
 
 PageIndexRange find_intersecting_pages(const std::vector<ViewRect>& page_frames,
                                        const ViewRect& rect);
+
+PageCachePlan compute_page_cache_plan(const std::vector<ViewRect>& page_frames,
+                                      const ViewRect& visible_rect,
+                                      float preload_margin_y);
 
 int find_nearest_page_to_viewport_center(const std::vector<ViewRect>& page_frames,
                                          float viewport_y,

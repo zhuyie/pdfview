@@ -101,6 +101,17 @@ PageIndexRange find_intersecting_pages(const std::vector<ViewRect>& page_frames,
   return range;
 }
 
+PageCachePlan compute_page_cache_plan(const std::vector<ViewRect>& page_frames,
+                                      const ViewRect& visible_rect,
+                                      float preload_margin_y) {
+  PageCachePlan plan;
+  plan.visible_rect = visible_rect;
+  plan.preload_rect = expand_rect(visible_rect, 0.0f, preload_margin_y);
+  plan.visible_range = find_intersecting_pages(page_frames, visible_rect);
+  plan.preload_range = find_intersecting_pages(page_frames, plan.preload_rect);
+  return plan;
+}
+
 int find_nearest_page_to_viewport_center(const std::vector<ViewRect>& page_frames,
                                          float viewport_y,
                                          float viewport_height) {
