@@ -8,13 +8,13 @@
 #include <vector>
 
 #include "core/document.h"
+#include "core/page_cache.h"
 #include "core/viewport.h"
 
 struct PageRenderCacheEntry {
   NSImage* image;
-  float renderScale;
 
-  PageRenderCacheEntry() : image(nil), renderScale(0.0f) {}
+  PageRenderCacheEntry() : image(nil) {}
 };
 
 @interface FlippedDocumentView : NSView
@@ -37,6 +37,7 @@ struct PageRenderCacheEntry {
   FlippedDocumentView* documentView_;
   std::vector<pdfview::core::PageSize> pageSizes_;
   std::vector<NSImageView*> pageImageViews_;
+  std::vector<pdfview::core::PageCacheSlotState> pageCacheStates_;
   std::vector<PageRenderCacheEntry> pageCache_;
   std::vector<pdfview::core::ViewRect> pageFrames_;
   int currentPage_;
@@ -86,6 +87,7 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
     const int pageCount = document_ ? document_->page_count() : 0;
     pageSizes_.resize(pageCount);
     pageImageViews_.resize(pageCount, nil);
+    pageCacheStates_ = pdfview::core::make_page_cache_states(pageCount);
     pageCache_.resize(pageCount);
     pageFrames_.resize(pageCount);
     for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
@@ -135,8 +137,6 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
 - (void)renderTabContext:(PDFTabContext*)context;
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context;
-- (void)discardCachedPagesOutsideRange:(const pdfview::core::PageIndexRange&)keepRange
-                               context:(PDFTabContext*)context;
 - (float)fitScaleForContext:(PDFTabContext*)context;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
@@ -563,9 +563,9 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
 
   if (std::abs(context->lastRenderScale_ - renderScale) > 0.001f) {
+    pdfview::core::invalidate_page_cache(&context->pageCacheStates_);
     for (size_t pageIndex = 0; pageIndex < context->pageCache_.size(); ++pageIndex) {
       context->pageCache_[pageIndex].image = nil;
-      context->pageCache_[pageIndex].renderScale = 0.0f;
       if (context->pageImageViews_[pageIndex] != nil) {
         [context->pageImageViews_[pageIndex] setImage:nil];
       }
@@ -625,19 +625,26 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
   const float logicalScale = [self currentScaleForContext:context];
   const CGFloat deviceScale = [self deviceScaleFactor];
   const float renderScale = logicalScale * static_cast<float>(deviceScale);
+  const pdfview::core::PageCacheUpdate cacheUpdate =
+      pdfview::core::plan_page_cache_update(cachePlan.preload_range,
+                                            context->pageCacheStates_,
+                                            renderScale);
 
-  for (int pageIndex = cachePlan.preload_range.start;
-       pageIndex < cachePlan.preload_range.end;
-       ++pageIndex) {
+  for (size_t discardIndex = 0; discardIndex < cacheUpdate.pages_to_discard.size(); ++discardIndex) {
+    const int pageIndex = cacheUpdate.pages_to_discard[discardIndex];
+    context->pageCache_[pageIndex].image = nil;
+    pdfview::core::mark_page_cache_discarded(&context->pageCacheStates_, pageIndex);
+    NSImageView* imageView = context->pageImageViews_[pageIndex];
+    if (imageView != nil) {
+      [imageView setImage:nil];
+    }
+  }
+
+  for (size_t renderIndex = 0; renderIndex < cacheUpdate.pages_to_render.size(); ++renderIndex) {
+    const int pageIndex = cacheUpdate.pages_to_render[renderIndex];
     const pdfview::core::ViewRect& pageFrame = context->pageFrames_[pageIndex];
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
-      continue;
-    }
-
-    PageRenderCacheEntry& cacheEntry = context->pageCache_[pageIndex];
-    if (cacheEntry.image != nil && std::abs(cacheEntry.renderScale - renderScale) <= 0.001f) {
-      [imageView setImage:cacheEntry.image];
       continue;
     }
 
@@ -650,31 +657,17 @@ pdfview::core::ViewRect ViewRectFromNSRect(const NSRect& rect) {
       continue;
     }
 
-    cacheEntry.image = [self imageFromBitmap:renderResult.bitmap
-                                 displaySize:NSMakeSize(pageFrame.width, pageFrame.height)];
-    cacheEntry.renderScale = renderScale;
-    [imageView setImage:cacheEntry.image];
+    context->pageCache_[pageIndex].image =
+        [self imageFromBitmap:renderResult.bitmap
+                  displaySize:NSMakeSize(pageFrame.width, pageFrame.height)];
+    [imageView setImage:context->pageCache_[pageIndex].image];
+    pdfview::core::mark_page_cache_rendered(&context->pageCacheStates_, pageIndex, renderScale);
   }
 
-  [self discardCachedPagesOutsideRange:cachePlan.preload_range context:context];
-}
-
-- (void)discardCachedPagesOutsideRange:(const pdfview::core::PageIndexRange&)keepRange
-                               context:(PDFTabContext*)context {
-  if (context == nil) {
-    return;
-  }
-
-  for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
-    if (!keepRange.empty() && pageIndex >= keepRange.start && pageIndex < keepRange.end) {
-      continue;
-    }
-
-    context->pageCache_[pageIndex].image = nil;
-    context->pageCache_[pageIndex].renderScale = 0.0f;
+  for (int pageIndex = cacheUpdate.keep_range.start; pageIndex < cacheUpdate.keep_range.end; ++pageIndex) {
     NSImageView* imageView = context->pageImageViews_[pageIndex];
-    if (imageView != nil) {
-      [imageView setImage:nil];
+    if (imageView != nil && context->pageCache_[pageIndex].image != nil) {
+      [imageView setImage:context->pageCache_[pageIndex].image];
     }
   }
 }

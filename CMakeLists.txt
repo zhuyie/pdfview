@@ -18,6 +18,7 @@ endif()
 
 add_library(pdfview_core
     src/core/document.cpp
+    src/core/page_cache.cpp
     src/core/pdfium_document.cpp
     src/core/viewport.cpp
 )
