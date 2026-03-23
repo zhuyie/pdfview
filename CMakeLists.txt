@@ -52,7 +52,7 @@ endif()
 if(APPLE)
     enable_language(OBJCXX)
     add_executable(pdfview_mac src/mac/main.mm)
-    target_link_libraries(pdfview_mac PRIVATE pdfview_core "-framework AppKit")
+    target_link_libraries(pdfview_mac PRIVATE pdfview_core "-framework AppKit" "-framework UniformTypeIdentifiers")
     target_compile_definitions(pdfview_mac PRIVATE $<$<BOOL:${PDFVIEW_ENABLE_PDFIUM}>:PDFVIEW_HAS_PDFIUM=1>)
     if(PDFVIEW_ENABLE_PDFIUM)
         add_custom_command(TARGET pdfview_mac POST_BUILD

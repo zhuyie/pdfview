@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 
 #include <CoreGraphics/CoreGraphics.h>
+#include <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <algorithm>
 #include <string>
@@ -23,6 +24,7 @@
  @public
   pdfview::core::DocumentPtr document_;
   std::string documentPath_;
+  NSView* containerView_;
   NSScrollView* scrollView_;
   FlippedDocumentView* documentView_;
   NSMutableArray* pageImageViews_;
@@ -50,8 +52,11 @@
     documentPath_ = path;
     currentPage_ = 0;
     manualScale_ = 1.0f;
-    useFitScale_ = YES;
+    useFitScale_ = NO;
     pageImageViews_ = [[NSMutableArray alloc] init];
+
+    containerView_ = [[NSView alloc] initWithFrame:frame];
+    [containerView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 
     scrollView_ = [[NSScrollView alloc] initWithFrame:frame];
     [scrollView_ setHasVerticalScroller:YES];
@@ -65,6 +70,7 @@
     [documentView_ setWantsLayer:YES];
     [[documentView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
     [scrollView_ setDocumentView:documentView_];
+    [containerView_ addSubview:scrollView_];
   }
   return self;
 }
@@ -76,9 +82,14 @@
 
 @end
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTabViewDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTabViewDelegate, NSComboBoxDelegate, NSTextFieldDelegate>
 - (instancetype)initWithArgc:(int)argc argv:(const char*[])argv;
 - (void)installMainMenu;
+- (void)installToolbarStripInView:(NSView*)contentView;
+- (void)layoutChrome;
+- (void)updateToolbarForActiveTab;
+- (BOOL)applyZoomString:(NSString*)rawValue;
+- (IBAction)zoomComboBoxChanged:(id)sender;
 - (void)presentError:(NSString*)message;
 - (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap;
 - (void)loadInitialDocuments;
@@ -104,6 +115,11 @@
 @implementation AppDelegate {
   NSWindow* window_;
   NSTabView* tabView_;
+  NSView* toolbarStrip_;
+  NSComboBox* zoomComboBox_;
+  NSButton* zoomOutButton_;
+  NSButton* zoomInButton_;
+  BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
   id keyMonitor_;
   int argc_;
@@ -116,6 +132,7 @@
     argc_ = argc;
     argv_ = argv;
     keyMonitor_ = nil;
+    zoomComboBoxEditing_ = NO;
     tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
@@ -136,7 +153,6 @@
   [window_ center];
   [window_ setTitle:@"pdfview"];
   [window_ setDelegate:self];
-  [window_ makeKeyAndOrderFront:nil];
 
   [self installMainMenu];
 
@@ -146,9 +162,12 @@
   [tabView_ setTabViewType:NSTopTabsBezelBorder];
   [tabView_ setDelegate:self];
   [contentView addSubview:tabView_];
+  [self installToolbarStripInView:contentView];
+  [self layoutChrome];
 
   [self installKeyMonitor];
   [self loadInitialDocuments];
+  [window_ makeKeyAndOrderFront:nil];
 }
 
 - (void)installMainMenu {
@@ -214,6 +233,167 @@
   [NSApp setMainMenu:mainMenu];
 }
 
+- (void)installToolbarStripInView:(NSView*)contentView {
+  toolbarStrip_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)];
+  [toolbarStrip_ setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+  [toolbarStrip_ setWantsLayer:YES];
+  [[toolbarStrip_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.965 alpha:1.0] CGColor]];
+  [contentView addSubview:toolbarStrip_];
+
+  NSBox* divider = [[NSBox alloc] initWithFrame:NSMakeRect(0, 0, 100, 1)];
+  [divider setBoxType:NSBoxSeparator];
+  [divider setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
+  [toolbarStrip_ addSubview:divider];
+
+  zoomOutButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(12, 4, 26, 22)];
+  [zoomOutButton_ setTitle:@"-"];
+  [zoomOutButton_ setBezelStyle:NSBezelStyleTexturedRounded];
+  [zoomOutButton_ setTarget:self];
+  [zoomOutButton_ setAction:@selector(zoomOut)];
+  [toolbarStrip_ addSubview:zoomOutButton_];
+
+  zoomComboBox_ = [[NSComboBox alloc] initWithFrame:NSMakeRect(44, 3, 92, 24)];
+  [zoomComboBox_ setUsesDataSource:NO];
+  [zoomComboBox_ setCompletes:NO];
+  [zoomComboBox_ setEditable:YES];
+  [zoomComboBox_ setDelegate:self];
+  [[zoomComboBox_ cell] setWraps:NO];
+  [zoomComboBox_ addItemsWithObjectValues:[NSArray arrayWithObjects:@"50%", @"75%", @"100%", @"125%", @"150%", @"200%", @"300%", nil]];
+  [toolbarStrip_ addSubview:zoomComboBox_];
+
+  zoomInButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(142, 4, 26, 22)];
+  [zoomInButton_ setTitle:@"+"];
+  [zoomInButton_ setBezelStyle:NSBezelStyleTexturedRounded];
+  [zoomInButton_ setTarget:self];
+  [zoomInButton_ setAction:@selector(zoomIn)];
+  [toolbarStrip_ addSubview:zoomInButton_];
+}
+
+- (void)layoutChrome {
+  PDFTabContext* context = [self activeTabContext];
+  if (tabView_ == nil || toolbarStrip_ == nil || context == nil) {
+    return;
+  }
+
+  const CGFloat toolbarHeight = 32.0f;
+  const NSRect contentRect = [tabView_ contentRect];
+  [context->containerView_ setFrame:contentRect];
+  [toolbarStrip_ removeFromSuperview];
+  [context->containerView_ addSubview:toolbarStrip_];
+  [toolbarStrip_ setFrame:NSMakeRect(0,
+                                     contentRect.size.height - toolbarHeight,
+                                     contentRect.size.width,
+                                     toolbarHeight)];
+
+  const NSRect documentFrame = NSMakeRect(0,
+                                          0,
+                                          contentRect.size.width,
+                                          std::max(contentRect.size.height - toolbarHeight, 0.0));
+  [context->scrollView_ setFrame:documentFrame];
+}
+
+- (void)updateToolbarForActiveTab {
+  if (zoomComboBox_ == nil) {
+    return;
+  }
+
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
+    [zoomComboBox_ setStringValue:@""];
+    [zoomComboBox_ setEnabled:NO];
+    return;
+  }
+
+  if (zoomComboBoxEditing_) {
+    return;
+  }
+
+  [zoomComboBox_ setEnabled:YES];
+  [zoomComboBox_ setStringValue:[NSString stringWithFormat:@"%.0f%%",
+                                                           [self currentScaleForContext:context] * 100.0f]];
+}
+
+- (BOOL)applyZoomString:(NSString*)rawValue {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil || zoomComboBox_ == nil) {
+    return NO;
+  }
+
+  NSString* normalizedValue =
+      [[rawValue stringByReplacingOccurrencesOfString:@"%" withString:@""]
+          stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  const CGFloat zoomPercent = [normalizedValue doubleValue];
+  if (zoomPercent <= 0.0) {
+    [self updateToolbarForActiveTab];
+    return NO;
+  }
+
+  context->manualScale_ = std::max(static_cast<float>(zoomPercent / 100.0), 0.1f);
+  context->useFitScale_ = NO;
+  [self renderTabContext:context];
+  [self updateToolbarForActiveTab];
+  return YES;
+}
+
+- (IBAction)zoomComboBoxChanged:(id)sender {
+  (void)sender;
+}
+
+- (void)comboBoxSelectionDidChange:(NSNotification*)notification {
+  if ([notification object] != zoomComboBox_) {
+    return;
+  }
+
+  zoomComboBoxEditing_ = NO;
+  const NSInteger selectedIndex = [zoomComboBox_ indexOfSelectedItem];
+  if (selectedIndex >= 0) {
+    id value = [zoomComboBox_ objectValueOfSelectedItem];
+    if ([value isKindOfClass:[NSString class]]) {
+      [self applyZoomString:(NSString*)value];
+      return;
+    }
+  }
+  [self updateToolbarForActiveTab];
+}
+
+- (void)controlTextDidBeginEditing:(NSNotification*)notification {
+  if ([notification object] == zoomComboBox_) {
+    zoomComboBoxEditing_ = YES;
+  }
+}
+
+- (void)controlTextDidEndEditing:(NSNotification*)notification {
+  if ([notification object] == zoomComboBox_) {
+    zoomComboBoxEditing_ = NO;
+    [self updateToolbarForActiveTab];
+  }
+}
+
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)commandSelector {
+  (void)textView;
+  if (control != zoomComboBox_) {
+    return NO;
+  }
+
+  if (commandSelector == @selector(insertNewline:)) {
+    zoomComboBoxEditing_ = NO;
+    const BOOL applied = [self applyZoomString:[zoomComboBox_ stringValue]];
+    if (applied) {
+      [[window_ firstResponder] resignFirstResponder];
+    }
+    return YES;
+  }
+
+  if (commandSelector == @selector(cancelOperation:)) {
+    zoomComboBoxEditing_ = NO;
+    [self updateToolbarForActiveTab];
+    [[window_ firstResponder] resignFirstResponder];
+    return YES;
+  }
+
+  return NO;
+}
+
 - (void)presentError:(NSString*)message {
   NSAlert* alert = [[NSAlert alloc] init];
   [alert setAlertStyle:NSAlertStyleCritical];
@@ -238,7 +418,7 @@
   PDFTabContext* context =
       [[PDFTabContext alloc] initWithDocument:result.document
                                          path:path
-                                        frame:[tabView_ contentRect]];
+                                        frame:NSMakeRect(0, 0, 100, 100)];
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
@@ -246,15 +426,21 @@
 
   NSTabViewItem* item = [[NSTabViewItem alloc] initWithIdentifier:context];
   [item setLabel:[context tabTitle]];
-  [item setView:context->scrollView_];
+  [item setView:context->containerView_];
   [tabContexts_ addObject:context];
   [tabView_ addTabViewItem:item];
 
-  [self renderTabContext:context];
-
   if (makeActive || [tabView_ numberOfTabViewItems] == 1) {
     [tabView_ selectTabViewItem:item];
+    [self layoutChrome];
+    [self renderTabContext:context];
+    [self scrollToCurrentPageInContext:context];
+  } else {
+    [self layoutChrome];
+    [self renderTabContext:context];
   }
+
+  [self updateToolbarForActiveTab];
 }
 
 - (IBAction)openDocument:(id)sender {
@@ -263,7 +449,7 @@
   [panel setCanChooseFiles:YES];
   [panel setCanChooseDirectories:NO];
   [panel setAllowsMultipleSelection:YES];
-  [panel setAllowedFileTypes:[NSArray arrayWithObjects:@"pdf", nil]];
+  [panel setAllowedContentTypes:[NSArray arrayWithObject:UTTypePDF]];
 
   if ([panel runModal] != NSModalResponseOK) {
     return;
@@ -291,6 +477,8 @@
   if ([tabView_ numberOfTabViewItems] == 0) {
     [window_ setTitle:@"pdfview"];
   }
+  [self layoutChrome];
+  [self updateToolbarForActiveTab];
 }
 
 - (IBAction)showHelp:(id)sender {
@@ -419,7 +607,7 @@
   context->manualScale_ = std::min([self currentScaleForContext:context] * 1.25f, 5.0f);
   context->useFitScale_ = NO;
   [self renderTabContext:context];
-  [self scrollToCurrentPageInContext:context];
+  [self updateToolbarForActiveTab];
 }
 
 - (void)zoomOut {
@@ -431,7 +619,7 @@
   context->manualScale_ = std::max([self currentScaleForContext:context] / 1.25f, 0.1f);
   context->useFitScale_ = NO;
   [self renderTabContext:context];
-  [self scrollToCurrentPageInContext:context];
+  [self updateToolbarForActiveTab];
 }
 
 - (void)resetZoomToFit {
@@ -442,7 +630,7 @@
 
   context->useFitScale_ = YES;
   [self renderTabContext:context];
-  [self scrollToCurrentPageInContext:context];
+  [self updateToolbarForActiveTab];
 }
 
 - (void)goToNextPage {
@@ -507,6 +695,18 @@
 - (void)installKeyMonitor {
   keyMonitor_ = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                       handler:^NSEvent*(NSEvent* event) {
+    if (zoomComboBoxEditing_) {
+      return event;
+    }
+
+    id firstResponder = [window_ firstResponder];
+    if ([firstResponder isKindOfClass:[NSTextView class]]) {
+      NSTextView* textView = (NSTextView*)firstResponder;
+      if ([textView delegate] == (id)zoomComboBox_) {
+        return event;
+      }
+    }
+
     PDFTabContext* context = [self activeTabContext];
     if (context == nil) {
       return event;
@@ -575,17 +775,31 @@
   PDFTabContext* context = (PDFTabContext*)[tabViewItem identifier];
   if (context != nil) {
     [window_ setTitle:[NSString stringWithFormat:@"pdfview - %@", [context tabTitle]]];
+    [self layoutChrome];
+    [self renderTabContext:context];
   }
+  [self updateToolbarForActiveTab];
 }
 
 - (void)windowDidResize:(NSNotification*)notification {
   (void)notification;
+  [self layoutChrome];
   for (PDFTabContext* context in tabContexts_) {
+    if (context != [self activeTabContext]) {
+      const CGFloat toolbarHeight = 32.0f;
+      const NSRect contentRect = [tabView_ contentRect];
+      [context->containerView_ setFrame:contentRect];
+      [context->scrollView_ setFrame:NSMakeRect(0,
+                                                0,
+                                                contentRect.size.width,
+                                                std::max(contentRect.size.height - toolbarHeight, 0.0))];
+    }
+    [self renderTabContext:context];
     if (context->useFitScale_) {
-      [self renderTabContext:context];
       [self scrollToCurrentPageInContext:context];
     }
   }
+  [self updateToolbarForActiveTab];
 }
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
