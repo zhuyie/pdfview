@@ -19,36 +19,91 @@
 
 @end
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
+@interface PDFTabContext : NSObject {
+ @public
+  pdfview::core::DocumentPtr document_;
+  std::string documentPath_;
+  NSScrollView* scrollView_;
+  FlippedDocumentView* documentView_;
+  NSMutableArray* pageImageViews_;
+  std::vector<NSRect> pageFrames_;
+  int currentPage_;
+  float manualScale_;
+  BOOL useFitScale_;
+}
+
+- (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
+                            path:(const std::string&)path
+                           frame:(NSRect)frame;
+- (NSString*)tabTitle;
+
+@end
+
+@implementation PDFTabContext
+
+- (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
+                            path:(const std::string&)path
+                           frame:(NSRect)frame {
+  self = [super init];
+  if (self != nil) {
+    document_ = document;
+    documentPath_ = path;
+    currentPage_ = 0;
+    manualScale_ = 1.0f;
+    useFitScale_ = YES;
+    pageImageViews_ = [[NSMutableArray alloc] init];
+
+    scrollView_ = [[NSScrollView alloc] initWithFrame:frame];
+    [scrollView_ setHasVerticalScroller:YES];
+    [scrollView_ setHasHorizontalScroller:YES];
+    [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [scrollView_ setBorderType:NSNoBorder];
+    [scrollView_ setBackgroundColor:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]];
+    [[scrollView_ contentView] setPostsBoundsChangedNotifications:YES];
+
+    documentView_ = [[FlippedDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
+    [documentView_ setWantsLayer:YES];
+    [[documentView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
+    [scrollView_ setDocumentView:documentView_];
+  }
+  return self;
+}
+
+- (NSString*)tabTitle {
+  NSString* path = [NSString stringWithUTF8String:documentPath_.c_str()];
+  return [path lastPathComponent];
+}
+
+@end
+
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTabViewDelegate>
 - (instancetype)initWithArgc:(int)argc argv:(const char*[])argv;
 - (void)installMainMenu;
 - (void)presentError:(NSString*)message;
 - (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap;
-- (void)loadInitialDocument;
-- (void)renderDocument;
-- (float)fitScaleForDocument;
-- (float)currentScale;
+- (void)loadInitialDocuments;
+- (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
+- (void)renderTabContext:(PDFTabContext*)context;
+- (float)fitScaleForContext:(PDFTabContext*)context;
+- (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
 - (void)zoomOut;
 - (void)resetZoomToFit;
 - (void)goToNextPage;
 - (void)goToPreviousPage;
-- (void)scrollToCurrentPage;
-- (void)updateCurrentPageFromScroll;
+- (void)scrollToCurrentPageInContext:(PDFTabContext*)context;
+- (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
+- (PDFTabContext*)activeTabContext;
+- (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
+- (IBAction)openDocument:(id)sender;
+- (IBAction)closeCurrentTab:(id)sender;
 @end
 
 @implementation AppDelegate {
   NSWindow* window_;
-  NSScrollView* scrollView_;
-  NSView* documentView_;
-  NSMutableArray* pageImageViews_;
-  std::vector<NSRect> pageFrames_;
-  pdfview::core::DocumentPtr document_;
-  std::string documentPath_;
-  int currentPage_;
-  float manualScale_;
-  BOOL useFitScale_;
+  NSTabView* tabView_;
+  NSMutableArray* tabContexts_;
   id keyMonitor_;
   int argc_;
   const char** argv_;
@@ -59,11 +114,8 @@
   if (self != nil) {
     argc_ = argc;
     argv_ = argv;
-    currentPage_ = 0;
-    manualScale_ = 1.0f;
-    useFitScale_ = YES;
     keyMonitor_ = nil;
-    pageImageViews_ = [[NSMutableArray alloc] init];
+    tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
 }
@@ -71,7 +123,7 @@
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
   (void)notification;
 
-  NSRect frame = NSMakeRect(0, 0, 960, 760);
+  NSRect frame = NSMakeRect(0, 0, 1080, 800);
   window_ = [[NSWindow alloc] initWithContentRect:frame
                                         styleMask:NSWindowStyleMaskTitled |
                                                   NSWindowStyleMaskClosable |
@@ -88,75 +140,169 @@
   [self installMainMenu];
 
   NSView* contentView = [window_ contentView];
-
-  scrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 960, 760)];
-  [scrollView_ setHasVerticalScroller:YES];
-  [scrollView_ setHasHorizontalScroller:YES];
-  [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-  [scrollView_ setBorderType:NSNoBorder];
-  [scrollView_ setBackgroundColor:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]];
-  [[scrollView_ contentView] setPostsBoundsChangedNotifications:YES];
-  [contentView addSubview:scrollView_];
-
-  documentView_ = [[FlippedDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
-  [documentView_ setWantsLayer:YES];
-  [[documentView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
-  [scrollView_ setDocumentView:documentView_];
-
-  [[NSNotificationCenter defaultCenter] addObserver:self
-                                           selector:@selector(updateCurrentPageFromScroll)
-                                               name:NSViewBoundsDidChangeNotification
-                                             object:[scrollView_ contentView]];
+  tabView_ = [[NSTabView alloc] initWithFrame:[contentView bounds]];
+  [tabView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [tabView_ setTabViewType:NSTopTabsBezelBorder];
+  [tabView_ setDelegate:self];
+  [contentView addSubview:tabView_];
 
   [self installKeyMonitor];
-  [self loadInitialDocument];
+  [self loadInitialDocuments];
 }
 
-- (void)loadInitialDocument {
-  if (argc_ <= 1) {
-    return;
-  }
+- (void)installMainMenu {
+  NSMenu* mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
 
-  documentPath_ = argv_[1];
-  const pdfview::core::OpenDocumentResult result = pdfview::core::open_document(documentPath_);
+  NSMenuItem* appMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:appMenuItem];
+  NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"pdfview"];
+  NSMenuItem* quitItem =
+      [[NSMenuItem alloc] initWithTitle:@"Quit pdfview"
+                                 action:@selector(terminate:)
+                          keyEquivalent:@"q"];
+  [appMenu addItem:quitItem];
+  [appMenuItem setSubmenu:appMenu];
+
+  NSMenuItem* fileMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:fileMenuItem];
+  NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+  NSMenuItem* openItem = [[NSMenuItem alloc] initWithTitle:@"Open..."
+                                                    action:@selector(openDocument:)
+                                             keyEquivalent:@"o"];
+  [openItem setTarget:self];
+  [fileMenu addItem:openItem];
+
+  NSMenuItem* closeTabItem = [[NSMenuItem alloc] initWithTitle:@"Close Tab"
+                                                        action:@selector(closeCurrentTab:)
+                                                 keyEquivalent:@"w"];
+  [closeTabItem setTarget:self];
+  [fileMenu addItem:closeTabItem];
+  [fileMenuItem setSubmenu:fileMenu];
+
+  [NSApp setMainMenu:mainMenu];
+}
+
+- (void)presentError:(NSString*)message {
+  NSAlert* alert = [[NSAlert alloc] init];
+  [alert setAlertStyle:NSAlertStyleCritical];
+  [alert setMessageText:@"pdfview"];
+  [alert setInformativeText:message];
+  [alert runModal];
+}
+
+- (void)loadInitialDocuments {
+  for (int index = 1; index < argc_; ++index) {
+    [self openDocumentAtPath:argv_[index] makeActive:index == argc_ - 1];
+  }
+}
+
+- (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive {
+  const pdfview::core::OpenDocumentResult result = pdfview::core::open_document(path);
   if (!result.ok()) {
     [self presentError:[NSString stringWithFormat:@"Failed to open PDF: %s", result.error.c_str()]];
     return;
   }
 
-  document_ = result.document;
-  currentPage_ = 0;
-  useFitScale_ = YES;
-  [window_ setTitle:[NSString stringWithFormat:@"pdfview - %s", documentPath_.c_str()]];
-  [self renderDocument];
-  [self scrollToCurrentPage];
+  PDFTabContext* context =
+      [[PDFTabContext alloc] initWithDocument:result.document
+                                         path:path
+                                        frame:[tabView_ contentRect]];
+  [[NSNotificationCenter defaultCenter] addObserver:self
+                                           selector:@selector(tabClipViewDidScroll:)
+                                               name:NSViewBoundsDidChangeNotification
+                                             object:[context->scrollView_ contentView]];
+
+  NSTabViewItem* item = [[NSTabViewItem alloc] initWithIdentifier:context];
+  [item setLabel:[context tabTitle]];
+  [item setView:context->scrollView_];
+  [tabContexts_ addObject:context];
+  [tabView_ addTabViewItem:item];
+
+  [self renderTabContext:context];
+
+  if (makeActive || [tabView_ numberOfTabViewItems] == 1) {
+    [tabView_ selectTabViewItem:item];
+  }
 }
 
-- (void)renderDocument {
-  if (!document_) {
+- (IBAction)openDocument:(id)sender {
+  (void)sender;
+  NSOpenPanel* panel = [NSOpenPanel openPanel];
+  [panel setCanChooseFiles:YES];
+  [panel setCanChooseDirectories:NO];
+  [panel setAllowsMultipleSelection:YES];
+  [panel setAllowedFileTypes:[NSArray arrayWithObjects:@"pdf", nil]];
+
+  if ([panel runModal] != NSModalResponseOK) {
     return;
   }
 
-  for (NSView* view in pageImageViews_) {
+  for (NSURL* url in [panel URLs]) {
+    [self openDocumentAtPath:[[url path] UTF8String] makeActive:YES];
+  }
+}
+
+- (IBAction)closeCurrentTab:(id)sender {
+  (void)sender;
+  NSTabViewItem* selectedItem = [tabView_ selectedTabViewItem];
+  if (selectedItem == nil) {
+    return;
+  }
+
+  PDFTabContext* context = (PDFTabContext*)[selectedItem identifier];
+  [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                  name:NSViewBoundsDidChangeNotification
+                                                object:[context->scrollView_ contentView]];
+  [tabContexts_ removeObject:context];
+  [tabView_ removeTabViewItem:selectedItem];
+
+  if ([tabView_ numberOfTabViewItems] == 0) {
+    [window_ setTitle:@"pdfview"];
+  }
+}
+
+- (PDFTabContext*)activeTabContext {
+  NSTabViewItem* item = [tabView_ selectedTabViewItem];
+  if (item == nil) {
+    return nil;
+  }
+  return (PDFTabContext*)[item identifier];
+}
+
+- (PDFTabContext*)contextForClipView:(NSClipView*)clipView {
+  for (PDFTabContext* context in tabContexts_) {
+    if ([context->scrollView_ contentView] == clipView) {
+      return context;
+    }
+  }
+  return nil;
+}
+
+- (void)renderTabContext:(PDFTabContext*)context {
+  if (context == nil || !context->document_) {
+    return;
+  }
+
+  for (NSView* view in context->pageImageViews_) {
     [view removeFromSuperview];
   }
-  [pageImageViews_ removeAllObjects];
-  pageFrames_.clear();
+  [context->pageImageViews_ removeAllObjects];
+  context->pageFrames_.clear();
 
-  const float scale = [self currentScale];
+  const float scale = [self currentScaleForContext:context];
   const CGFloat pageGap = 24.0f;
   const CGFloat topMargin = 20.0f;
   const CGFloat sideMargin = 16.0f;
-  const NSSize clipSize = [[scrollView_ contentView] bounds].size;
+  const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
 
   CGFloat documentWidth = clipSize.width;
   CGFloat maxPageWidth = 0.0f;
   CGFloat cursorY = topMargin;
 
-  const int pageCount = document_->page_count();
+  const int pageCount = context->document_->page_count();
   for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
     const pdfview::core::RenderPageResult renderResult =
-        document_->render_page(pageIndex, scale);
+        context->document_->render_page(pageIndex, scale);
     if (!renderResult.ok()) {
       [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
                                                     pageIndex + 1,
@@ -171,30 +317,37 @@
     [imageView setImageAlignment:NSImageAlignCenter];
     [imageView setImageScaling:NSImageScaleNone];
 
-    const CGFloat pageX = std::max((clipSize.width - renderResult.bitmap.width) * 0.5, sideMargin);
-    const NSRect pageFrame = NSMakeRect(pageX, cursorY, renderResult.bitmap.width, renderResult.bitmap.height);
+    const CGFloat pageX =
+        std::max((clipSize.width - renderResult.bitmap.width) * 0.5, sideMargin);
+    const NSRect pageFrame =
+        NSMakeRect(pageX, cursorY, renderResult.bitmap.width, renderResult.bitmap.height);
     [imageView setFrame:pageFrame];
-    [documentView_ addSubview:imageView];
-    [pageImageViews_ addObject:imageView];
-    pageFrames_.push_back(pageFrame);
+    [context->documentView_ addSubview:imageView];
+    [context->pageImageViews_ addObject:imageView];
+    context->pageFrames_.push_back(pageFrame);
 
     cursorY += renderResult.bitmap.height + pageGap;
-    documentWidth = std::max(documentWidth, pageFrame.origin.x + pageFrame.size.width + sideMargin);
+    documentWidth =
+        std::max(documentWidth, pageFrame.origin.x + pageFrame.size.width + sideMargin);
     maxPageWidth = std::max(maxPageWidth, static_cast<CGFloat>(renderResult.bitmap.width));
   }
 
   const CGFloat documentHeight = std::max(cursorY, clipSize.height);
-  [documentView_ setFrame:NSMakeRect(0, 0, std::max(documentWidth, maxPageWidth + sideMargin * 2.0f), documentHeight)];
+  [context->documentView_
+      setFrame:NSMakeRect(0,
+                          0,
+                          std::max(documentWidth, maxPageWidth + sideMargin * 2.0f),
+                          documentHeight)];
 }
 
-- (float)fitScaleForDocument {
-  if (!document_ || document_->page_count() <= 0) {
+- (float)fitScaleForContext:(PDFTabContext*)context {
+  if (context == nil || !context->document_ || context->document_->page_count() <= 0) {
     return 1.0f;
   }
 
   float maxPageWidth = 0.0f;
-  for (int pageIndex = 0; pageIndex < document_->page_count(); ++pageIndex) {
-    const pdfview::core::PageSize pageSize = document_->page_size(pageIndex);
+  for (int pageIndex = 0; pageIndex < context->document_->page_count(); ++pageIndex) {
+    const pdfview::core::PageSize pageSize = context->document_->page_size(pageIndex);
     maxPageWidth = std::max(maxPageWidth, pageSize.width);
   }
 
@@ -202,92 +355,99 @@
     return 1.0f;
   }
 
-  const NSSize clipSize = [[scrollView_ contentView] bounds].size;
+  const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
   const float horizontalPadding = 48.0f;
   const float targetWidth = std::max(clipSize.width - horizontalPadding, 120.0);
   const float scale = targetWidth / maxPageWidth;
   return std::max(0.25f, scale);
 }
 
-- (float)currentScale {
-  if (useFitScale_) {
-    return [self fitScaleForDocument];
+- (float)currentScaleForContext:(PDFTabContext*)context {
+  if (context->useFitScale_) {
+    return [self fitScaleForContext:context];
   }
-  return std::max(0.1f, manualScale_);
+  return std::max(0.1f, context->manualScale_);
 }
 
 - (void)zoomIn {
-  if (!document_) {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
     return;
   }
 
-  manualScale_ = std::min([self currentScale] * 1.25f, 5.0f);
-  useFitScale_ = NO;
-  [self renderDocument];
-  [self scrollToCurrentPage];
+  context->manualScale_ = std::min([self currentScaleForContext:context] * 1.25f, 5.0f);
+  context->useFitScale_ = NO;
+  [self renderTabContext:context];
+  [self scrollToCurrentPageInContext:context];
 }
 
 - (void)zoomOut {
-  if (!document_) {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
     return;
   }
 
-  manualScale_ = std::max([self currentScale] / 1.25f, 0.1f);
-  useFitScale_ = NO;
-  [self renderDocument];
-  [self scrollToCurrentPage];
+  context->manualScale_ = std::max([self currentScaleForContext:context] / 1.25f, 0.1f);
+  context->useFitScale_ = NO;
+  [self renderTabContext:context];
+  [self scrollToCurrentPageInContext:context];
 }
 
 - (void)resetZoomToFit {
-  if (!document_) {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
     return;
   }
 
-  useFitScale_ = YES;
-  [self renderDocument];
-  [self scrollToCurrentPage];
+  context->useFitScale_ = YES;
+  [self renderTabContext:context];
+  [self scrollToCurrentPageInContext:context];
 }
 
 - (void)goToNextPage {
-  if (!document_ || currentPage_ + 1 >= document_->page_count()) {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil || context->currentPage_ + 1 >= context->document_->page_count()) {
     return;
   }
 
-  currentPage_ += 1;
-  [self scrollToCurrentPage];
+  context->currentPage_ += 1;
+  [self scrollToCurrentPageInContext:context];
 }
 
 - (void)goToPreviousPage {
-  if (!document_ || currentPage_ <= 0) {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil || context->currentPage_ <= 0) {
     return;
   }
 
-  currentPage_ -= 1;
-  [self scrollToCurrentPage];
+  context->currentPage_ -= 1;
+  [self scrollToCurrentPageInContext:context];
 }
 
-- (void)scrollToCurrentPage {
-  if (currentPage_ < 0 || currentPage_ >= static_cast<int>(pageFrames_.size())) {
+- (void)scrollToCurrentPageInContext:(PDFTabContext*)context {
+  if (context == nil ||
+      context->currentPage_ < 0 ||
+      context->currentPage_ >= static_cast<int>(context->pageFrames_.size())) {
     return;
   }
 
-  const NSRect pageFrame = pageFrames_[currentPage_];
-  [[scrollView_ documentView] scrollRectToVisible:pageFrame];
+  const NSRect pageFrame = context->pageFrames_[context->currentPage_];
+  [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
 }
 
-- (void)updateCurrentPageFromScroll {
-  if (!document_ || pageFrames_.empty()) {
+- (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context {
+  if (context == nil || context->pageFrames_.empty()) {
     return;
   }
 
-  const NSRect visibleRect = [[scrollView_ contentView] bounds];
-  const CGFloat visibleCenterY = visibleRect.origin.y + visibleRect.size.height * 0.5;
+  const NSRect visibleRect = [[context->scrollView_ contentView] bounds];
+  const CGFloat visibleCenterY = visibleRect.origin.y + visibleRect.size.height * 0.5f;
 
   int nearestPage = 0;
   CGFloat nearestDistance = CGFLOAT_MAX;
-  for (int pageIndex = 0; pageIndex < static_cast<int>(pageFrames_.size()); ++pageIndex) {
-    const NSRect pageFrame = pageFrames_[pageIndex];
-    const CGFloat pageCenterY = pageFrame.origin.y + pageFrame.size.height * 0.5;
+  for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
+    const NSRect pageFrame = context->pageFrames_[pageIndex];
+    const CGFloat pageCenterY = pageFrame.origin.y + pageFrame.size.height * 0.5f;
     const CGFloat distance = std::abs(pageCenterY - visibleCenterY);
     if (distance < nearestDistance) {
       nearestDistance = distance;
@@ -295,15 +455,19 @@
     }
   }
 
-  if (nearestPage != currentPage_) {
-    currentPage_ = nearestPage;
-  }
+  context->currentPage_ = nearestPage;
+}
+
+- (void)tabClipViewDidScroll:(NSNotification*)notification {
+  PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
+  [self updateCurrentPageFromScrollForContext:context];
 }
 
 - (void)installKeyMonitor {
   keyMonitor_ = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                       handler:^NSEvent*(NSEvent* event) {
-    if (!document_) {
+    PDFTabContext* context = [self activeTabContext];
+    if (context == nil) {
       return event;
     }
 
@@ -340,31 +504,6 @@
   }];
 }
 
-- (void)installMainMenu {
-  NSMenu* mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
-  NSMenuItem* appMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
-  [mainMenu addItem:appMenuItem];
-
-  NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"pdfview"];
-  NSString* appName = @"pdfview";
-  NSMenuItem* quitItem =
-      [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Quit %@", appName]
-                                 action:@selector(terminate:)
-                          keyEquivalent:@"q"];
-  [appMenu addItem:quitItem];
-  [appMenuItem setSubmenu:appMenu];
-
-  [NSApp setMainMenu:mainMenu];
-}
-
-- (void)presentError:(NSString*)message {
-  NSAlert* alert = [[NSAlert alloc] init];
-  [alert setAlertStyle:NSAlertStyleCritical];
-  [alert setMessageText:@"pdfview"];
-  [alert setInformativeText:message];
-  [alert runModal];
-}
-
 - (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap {
   NSData* bitmapData =
       [NSData dataWithBytes:bitmap.pixels.data() length:bitmap.pixels.size()];
@@ -390,13 +529,21 @@
   return image;
 }
 
+- (void)tabView:(NSTabView*)tabView didSelectTabViewItem:(NSTabViewItem*)tabViewItem {
+  (void)tabView;
+  PDFTabContext* context = (PDFTabContext*)[tabViewItem identifier];
+  if (context != nil) {
+    [window_ setTitle:[NSString stringWithFormat:@"pdfview - %@", [context tabTitle]]];
+  }
+}
+
 - (void)windowDidResize:(NSNotification*)notification {
   (void)notification;
-  if (useFitScale_) {
-    [self renderDocument];
-    [self scrollToCurrentPage];
-  } else {
-    [self updateCurrentPageFromScroll];
+  for (PDFTabContext* context in tabContexts_) {
+    if (context->useFitScale_) {
+      [self renderTabContext:context];
+      [self scrollToCurrentPageInContext:context];
+    }
   }
 }
 
