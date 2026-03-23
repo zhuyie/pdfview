@@ -1,2 +1,4 @@
 build/
+build-pdfium/
 .DS_Store
+3rdparty/pdfium/downloads/

@@ -9,6 +9,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(PDFVIEW_ENABLE_PDFIUM "Enable PDFium-backed document loading" OFF)
 set(PDFIUM_ROOT "" CACHE PATH "Path to a PDFium distribution root")
 
+if(PDFIUM_ROOT STREQUAL "")
+    if(APPLE)
+        set(PDFIUM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/pdfium/mac-univ")
+    elseif(WIN32)
+        set(PDFIUM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/pdfium/win-x64")
+    endif()
+endif()
+
 add_library(pdfview_core
     src/core/document.cpp
     src/core/pdfium_document.cpp
@@ -46,8 +54,22 @@ if(APPLE)
     add_executable(pdfview_mac src/mac/main.mm)
     target_link_libraries(pdfview_mac PRIVATE pdfview_core "-framework AppKit")
     target_compile_definitions(pdfview_mac PRIVATE $<$<BOOL:${PDFVIEW_ENABLE_PDFIUM}>:PDFVIEW_HAS_PDFIUM=1>)
+    if(PDFVIEW_ENABLE_PDFIUM)
+        add_custom_command(TARGET pdfview_mac POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PDFIUM_ROOT}/lib/libpdfium.dylib"
+                "$<TARGET_FILE_DIR:pdfview_mac>/libpdfium.dylib"
+        )
+    endif()
 elseif(WIN32)
     add_executable(pdfview_win WIN32 src/win/main.cpp)
     target_link_libraries(pdfview_win PRIVATE pdfview_core)
     target_compile_definitions(pdfview_win PRIVATE $<$<BOOL:${PDFVIEW_ENABLE_PDFIUM}>:PDFVIEW_HAS_PDFIUM=1>)
+    if(PDFVIEW_ENABLE_PDFIUM)
+        add_custom_command(TARGET pdfview_win POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PDFIUM_ROOT}/bin/pdfium.dll"
+                "$<TARGET_FILE_DIR:pdfview_win>/pdfium.dll"
+        )
+    endif()
 endif()
