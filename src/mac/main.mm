@@ -9,6 +9,13 @@
 
 #include "core/document.h"
 
+struct PageRenderCacheEntry {
+  NSImage* image;
+  float renderScale;
+
+  PageRenderCacheEntry() : image(nil), renderScale(0.0f) {}
+};
+
 @interface FlippedDocumentView : NSView
 @end
 
@@ -27,10 +34,13 @@
   NSView* containerView_;
   NSScrollView* scrollView_;
   FlippedDocumentView* documentView_;
-  NSMutableArray* pageImageViews_;
+  std::vector<pdfview::core::PageSize> pageSizes_;
+  std::vector<NSImageView*> pageImageViews_;
+  std::vector<PageRenderCacheEntry> pageCache_;
   std::vector<NSRect> pageFrames_;
   int currentPage_;
   float manualScale_;
+  float lastRenderScale_;
   BOOL useFitScale_;
 }
 
@@ -52,8 +62,17 @@
     documentPath_ = path;
     currentPage_ = 0;
     manualScale_ = 1.0f;
+    lastRenderScale_ = 0.0f;
     useFitScale_ = NO;
-    pageImageViews_ = [[NSMutableArray alloc] init];
+
+    const int pageCount = document_ ? document_->page_count() : 0;
+    pageSizes_.resize(pageCount);
+    pageImageViews_.resize(pageCount, nil);
+    pageCache_.resize(pageCount);
+    pageFrames_.resize(pageCount, NSZeroRect);
+    for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+      pageSizes_[pageIndex] = document_->page_size(pageIndex);
+    }
 
     containerView_ = [[NSView alloc] initWithFrame:frame];
     [containerView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -97,6 +116,8 @@
 - (void)loadInitialDocuments;
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
 - (void)renderTabContext:(PDFTabContext*)context;
+- (void)updateVisiblePagesForContext:(PDFTabContext*)context;
+- (void)discardCachedPagesOutsideRect:(NSRect)keepRect context:(PDFTabContext*)context;
 - (float)fitScaleForContext:(PDFTabContext*)context;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
@@ -514,12 +535,6 @@
     return;
   }
 
-  for (NSView* view in context->pageImageViews_) {
-    [view removeFromSuperview];
-  }
-  [context->pageImageViews_ removeAllObjects];
-  context->pageFrames_.clear();
-
   const float logicalScale = [self currentScaleForContext:context];
   const CGFloat deviceScale = [self deviceScaleFactor];
   const float renderScale = logicalScale * static_cast<float>(deviceScale);
@@ -532,35 +547,37 @@
   CGFloat maxPageWidth = 0.0f;
   CGFloat cursorY = topMargin;
 
-  const int pageCount = context->document_->page_count();
+  if (std::abs(context->lastRenderScale_ - renderScale) > 0.001f) {
+    for (size_t pageIndex = 0; pageIndex < context->pageCache_.size(); ++pageIndex) {
+      context->pageCache_[pageIndex].image = nil;
+      context->pageCache_[pageIndex].renderScale = 0.0f;
+      if (context->pageImageViews_[pageIndex] != nil) {
+        [context->pageImageViews_[pageIndex] setImage:nil];
+      }
+    }
+    context->lastRenderScale_ = renderScale;
+  }
+
+  const int pageCount = static_cast<int>(context->pageSizes_.size());
   for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
-    const pdfview::core::PageSize pageSize = context->document_->page_size(pageIndex);
+    const pdfview::core::PageSize pageSize = context->pageSizes_[pageIndex];
     const CGFloat displayWidth = pageSize.width * logicalScale;
     const CGFloat displayHeight = pageSize.height * logicalScale;
-
-    const pdfview::core::RenderPageResult renderResult =
-        context->document_->render_page(pageIndex, renderScale);
-    if (!renderResult.ok()) {
-      [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
-                                                    pageIndex + 1,
-                                                    renderResult.error.c_str()]];
-      continue;
+    NSImageView* imageView = context->pageImageViews_[pageIndex];
+    if (imageView == nil) {
+      imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(0, 0, displayWidth, displayHeight)];
+      [imageView setImageAlignment:NSImageAlignCenter];
+      [imageView setImageScaling:NSImageScaleNone];
+      [imageView setWantsLayer:YES];
+      [[imageView layer] setBackgroundColor:[[NSColor whiteColor] CGColor]];
+      context->pageImageViews_[pageIndex] = imageView;
+      [context->documentView_ addSubview:imageView];
     }
-
-    NSImage* image = [self imageFromBitmap:renderResult.bitmap
-                               displaySize:NSMakeSize(displayWidth, displayHeight)];
-    NSImageView* imageView = [[NSImageView alloc]
-        initWithFrame:NSMakeRect(0, 0, displayWidth, displayHeight)];
-    [imageView setImage:image];
-    [imageView setImageAlignment:NSImageAlignCenter];
-    [imageView setImageScaling:NSImageScaleNone];
 
     const CGFloat pageX = std::max((clipSize.width - displayWidth) * 0.5, sideMargin);
     const NSRect pageFrame = NSMakeRect(pageX, cursorY, displayWidth, displayHeight);
     [imageView setFrame:pageFrame];
-    [context->documentView_ addSubview:imageView];
-    [context->pageImageViews_ addObject:imageView];
-    context->pageFrames_.push_back(pageFrame);
+    context->pageFrames_[pageIndex] = pageFrame;
 
     cursorY += displayHeight + pageGap;
     documentWidth =
@@ -574,6 +591,76 @@
                           0,
                           std::max(documentWidth, maxPageWidth + sideMargin * 2.0f),
                           documentHeight)];
+  [self updateVisiblePagesForContext:context];
+}
+
+- (void)updateVisiblePagesForContext:(PDFTabContext*)context {
+  if (context == nil || context->pageFrames_.empty()) {
+    return;
+  }
+
+  const NSRect visibleRect = [[context->scrollView_ contentView] bounds];
+  NSRect preloadRect = NSInsetRect(visibleRect, 0.0f, -visibleRect.size.height * 0.5f);
+  if (preloadRect.size.height < visibleRect.size.height) {
+    preloadRect.size.height = visibleRect.size.height;
+  }
+
+  const float logicalScale = [self currentScaleForContext:context];
+  const CGFloat deviceScale = [self deviceScaleFactor];
+  const float renderScale = logicalScale * static_cast<float>(deviceScale);
+
+  for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
+    const NSRect pageFrame = context->pageFrames_[pageIndex];
+    NSImageView* imageView = context->pageImageViews_[pageIndex];
+    if (imageView == nil) {
+      continue;
+    }
+
+    if (!NSIntersectsRect(pageFrame, preloadRect)) {
+      continue;
+    }
+
+    PageRenderCacheEntry& cacheEntry = context->pageCache_[pageIndex];
+    if (cacheEntry.image != nil && std::abs(cacheEntry.renderScale - renderScale) <= 0.001f) {
+      [imageView setImage:cacheEntry.image];
+      continue;
+    }
+
+    const pdfview::core::RenderPageResult renderResult =
+        context->document_->render_page(pageIndex, renderScale);
+    if (!renderResult.ok()) {
+      [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
+                                                    pageIndex + 1,
+                                                    renderResult.error.c_str()]];
+      continue;
+    }
+
+    cacheEntry.image = [self imageFromBitmap:renderResult.bitmap
+                                 displaySize:pageFrame.size];
+    cacheEntry.renderScale = renderScale;
+    [imageView setImage:cacheEntry.image];
+  }
+
+  [self discardCachedPagesOutsideRect:preloadRect context:context];
+}
+
+- (void)discardCachedPagesOutsideRect:(NSRect)keepRect context:(PDFTabContext*)context {
+  if (context == nil) {
+    return;
+  }
+
+  for (int pageIndex = 0; pageIndex < static_cast<int>(context->pageFrames_.size()); ++pageIndex) {
+    if (NSIntersectsRect(context->pageFrames_[pageIndex], keepRect)) {
+      continue;
+    }
+
+    context->pageCache_[pageIndex].image = nil;
+    context->pageCache_[pageIndex].renderScale = 0.0f;
+    NSImageView* imageView = context->pageImageViews_[pageIndex];
+    if (imageView != nil) {
+      [imageView setImage:nil];
+    }
+  }
 }
 
 - (float)fitScaleForContext:(PDFTabContext*)context {
@@ -669,6 +756,7 @@
 
   const NSRect pageFrame = context->pageFrames_[context->currentPage_];
   [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
+  [self updateVisiblePagesForContext:context];
 }
 
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context {
@@ -696,6 +784,7 @@
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
   PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
+  [self updateVisiblePagesForContext:context];
   [self updateCurrentPageFromScrollForContext:context];
 }
 
