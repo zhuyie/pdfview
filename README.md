@@ -81,7 +81,7 @@ Recommended implementation order:
 
 ## PDFium Integration
 
-The repository now includes a PDFium-backed document loader scaffold behind a CMake option.
+The repository uses PDFium by default.
 
 By default, CMake will look for a vendored PDFium distribution under `3rdparty/pdfium` on macOS and Windows.
 
@@ -94,7 +94,7 @@ To fetch the pinned binaries:
 Then configure with PDFium enabled:
 
 ```bash
-cmake -S . -B build -DPDFVIEW_ENABLE_PDFIUM=ON
+cmake -S . -B build
 cmake --build build
 ```
 
@@ -102,7 +102,6 @@ If you need a non-vendored PDFium build, override `PDFIUM_ROOT` manually:
 
 ```bash
 cmake -S . -B build \
-  -DPDFVIEW_ENABLE_PDFIUM=ON \
   -DPDFIUM_ROOT=/path/to/pdfium
 cmake --build build
 ```

@@ -3,15 +3,11 @@
 #include <memory>
 #include <string>
 
-#if defined(PDFVIEW_HAS_PDFIUM)
 #include "fpdf_edit.h"
 #include "fpdfview.h"
-#endif
 
 namespace pdfview {
 namespace core {
-
-#if defined(PDFVIEW_HAS_PDFIUM)
 
 namespace {
 
@@ -128,17 +124,6 @@ OpenDocumentResult open_pdfium_document(const std::string& path) {
   result.document = std::make_shared<PdfiumDocument>(document);
   return result;
 }
-
-#else
-
-OpenDocumentResult open_pdfium_document(const std::string&) {
-  OpenDocumentResult result;
-  result.document.reset();
-  result.error = "PDFium support is not enabled. Configure with -DPDFVIEW_ENABLE_PDFIUM=ON and set PDFIUM_ROOT.";
-  return result;
-}
-
-#endif
 
 }  // namespace core
 }  // namespace pdfview

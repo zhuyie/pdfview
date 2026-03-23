@@ -32,5 +32,5 @@ Vendoring metadata lives in `3rdparty/pdfium/vendor.env`.
 
 ## Notes
 
-- `PDFVIEW_ENABLE_PDFIUM=ON` will use the vendored directory by default on macOS and Windows.
+- Builds use the vendored directory by default on macOS and Windows.
 - If you need a different PDFium build, override `PDFIUM_ROOT` at CMake configure time.
