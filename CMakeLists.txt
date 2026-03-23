@@ -59,6 +59,10 @@ if(APPLE)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PDFIUM_ROOT}/lib/libpdfium.dylib"
                 "$<TARGET_FILE_DIR:pdfview_mac>/libpdfium.dylib"
+            COMMAND install_name_tool -id "@executable_path/libpdfium.dylib"
+                "$<TARGET_FILE_DIR:pdfview_mac>/libpdfium.dylib"
+            COMMAND install_name_tool -change "./libpdfium.dylib" "@executable_path/libpdfium.dylib"
+                "$<TARGET_FILE:pdfview_mac>"
         )
     endif()
 elseif(WIN32)
