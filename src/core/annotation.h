@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 
-namespace pdfview::core {
+namespace pdfview {
+namespace core {
 
 enum class AnnotationKind : std::uint8_t {
   Highlight,
@@ -50,4 +51,5 @@ struct Annotation {
   std::string modified_at;
 };
 
-}  // namespace pdfview::core
+}  // namespace core
+}  // namespace pdfview

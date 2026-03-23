@@ -3,7 +3,8 @@
 #include <memory>
 #include <string>
 
-namespace pdfview::core {
+namespace pdfview {
+namespace core {
 
 struct PageSize {
   float width = 0.0f;
@@ -20,4 +21,14 @@ class Document {
 
 using DocumentPtr = std::shared_ptr<Document>;
 
-}  // namespace pdfview::core
+struct OpenDocumentResult {
+  DocumentPtr document;
+  std::string error;
+
+  bool ok() const { return static_cast<bool>(document); }
+};
+
+OpenDocumentResult open_document(const std::string& path);
+
+}  // namespace core
+}  // namespace pdfview

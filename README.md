@@ -78,3 +78,28 @@ Recommended implementation order:
 3. Add text hit testing and selection
 4. Add annotation overlays and sidecar persistence
 5. Add search, outline, and thumbnail panels
+
+## PDFium Integration
+
+The repository now includes a PDFium-backed document loader scaffold behind a CMake option.
+
+Configure with PDFium enabled by pointing `PDFIUM_ROOT` to a local PDFium distribution:
+
+```bash
+cmake -S . -B build \
+  -DPDFVIEW_ENABLE_PDFIUM=ON \
+  -DPDFIUM_ROOT=/path/to/pdfium
+cmake --build build
+```
+
+Expected layout under `PDFIUM_ROOT`:
+
+```text
+pdfium/
+├── include/
+│   └── fpdfview.h
+└── lib/
+    └── libpdfium.dylib   # macOS example
+```
+
+Alternative library directories such as `lib/mac`, `lib/win`, and `bin` are also checked.

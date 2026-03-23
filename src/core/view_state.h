@@ -1,6 +1,7 @@
 #pragma once
 
-namespace pdfview::core {
+namespace pdfview {
+namespace core {
 
 enum class LayoutMode {
   SinglePage,
@@ -15,4 +16,5 @@ struct ViewState {
   int current_page = 0;
 };
 
-}  // namespace pdfview::core
+}  // namespace core
+}  // namespace pdfview
