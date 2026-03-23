@@ -288,6 +288,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                   context:(PDFTabContext*)context
                    pdfMs:(double)pdfMilliseconds;
 - (BOOL)isContextActive:(PDFTabContext*)context;
+- (CGFloat)effectiveDeviceScaleForContext:(PDFTabContext*)context;
+- (void)beginInteractiveRenderingForContext:(PDFTabContext*)context;
+- (void)endInteractiveRendering:(NSTimer*)timer;
+- (void)cancelInteractiveRendering;
 - (float)fitScaleForContext:(PDFTabContext*)context;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
@@ -316,6 +320,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSMutableArray* tabContexts_;
   dispatch_queue_t renderQueue_;
   long long nextRenderRequestId_;
+  NSTimer* interactiveRenderTimer_;
+  PDFTabContext* interactiveRenderContext_;
   id keyMonitor_;
   int argc_;
   const char** argv_;
@@ -330,6 +336,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     zoomComboBoxEditing_ = NO;
     renderQueue_ = dispatch_queue_create("com.pdfview.render", DISPATCH_QUEUE_SERIAL);
     nextRenderRequestId_ = 1;
+    interactiveRenderTimer_ = nil;
+    interactiveRenderContext_ = nil;
     tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
@@ -708,13 +716,61 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return context != nil && context == [self activeTabContext];
 }
 
+- (CGFloat)effectiveDeviceScaleForContext:(PDFTabContext*)context {
+  CGFloat deviceScale = [self deviceScaleFactor];
+  if (context != nil && context == interactiveRenderContext_) {
+    deviceScale = std::max(1.0, deviceScale * 0.5);
+  }
+  return deviceScale;
+}
+
+- (void)beginInteractiveRenderingForContext:(PDFTabContext*)context {
+  if (context == nil) {
+    return;
+  }
+
+  interactiveRenderContext_ = context;
+  if (interactiveRenderTimer_ != nil) {
+    [interactiveRenderTimer_ invalidate];
+    interactiveRenderTimer_ = nil;
+  }
+  interactiveRenderTimer_ =
+      [NSTimer scheduledTimerWithTimeInterval:0.12
+                                       target:self
+                                     selector:@selector(endInteractiveRendering:)
+                                     userInfo:nil
+                                      repeats:NO];
+  [[NSRunLoop mainRunLoop] addTimer:interactiveRenderTimer_ forMode:NSRunLoopCommonModes];
+}
+
+- (void)endInteractiveRendering:(NSTimer*)timer {
+  if (timer != interactiveRenderTimer_) {
+    return;
+  }
+
+  interactiveRenderTimer_ = nil;
+  PDFTabContext* context = interactiveRenderContext_;
+  interactiveRenderContext_ = nil;
+  if ([self isContextActive:context]) {
+    [self updateVisiblePagesForContext:context];
+  }
+}
+
+- (void)cancelInteractiveRendering {
+  if (interactiveRenderTimer_ != nil) {
+    [interactiveRenderTimer_ invalidate];
+    interactiveRenderTimer_ = nil;
+  }
+  interactiveRenderContext_ = nil;
+}
+
 - (void)renderTabContext:(PDFTabContext*)context {
   if (context == nil || !context->document_) {
     return;
   }
 
   const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
-  const CGFloat deviceScale = [self deviceScaleFactor];
+  const CGFloat deviceScale = [self effectiveDeviceScaleForContext:context];
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
   const float logicalScale = [context currentScaleForViewportWidth:clipSize.width];
   const float renderScale = logicalScale * static_cast<float>(deviceScale);
@@ -783,7 +839,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   long long renderedPixelCount = 0;
   const pdfview::core::ViewRect visibleRect =
       ViewRectFromNSRect([[context->scrollView_ contentView] bounds]);
-  const CGFloat deviceScale = [self deviceScaleFactor];
+  const CGFloat deviceScale = [self effectiveDeviceScaleForContext:context];
   const pdfview::core::PageRenderPlan renderPlan =
       [context renderPlanForVisibleRect:visibleRect deviceScale:deviceScale];
 
@@ -949,6 +1005,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
+  [self cancelInteractiveRendering];
   [context setManualScale:std::min([self currentScaleForContext:context] * 1.25f, 5.0f)];
   [context setUseFitScale:NO];
   [self renderTabContext:context];
@@ -961,6 +1018,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
+  [self cancelInteractiveRendering];
   [context setManualScale:std::max([self currentScaleForContext:context] / 1.25f, 0.1f)];
   [context setUseFitScale:NO];
   [self renderTabContext:context];
@@ -973,6 +1031,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
+  [self cancelInteractiveRendering];
   [context setUseFitScale:YES];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
@@ -1005,6 +1064,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
+  [self cancelInteractiveRendering];
   const NSRect pageFrame = NSRectFromViewRect(context->pageFrames_[context->currentPage_]);
   [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
   [self updateVisiblePagesForContext:context];
@@ -1023,6 +1083,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
   PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
   [self updateCurrentPageFromScrollForContext:context];
+  [self beginInteractiveRenderingForContext:context];
   [self updateVisiblePagesForContext:context];
 }
 
@@ -1115,6 +1176,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (void)tabView:(NSTabView*)tabView didSelectTabViewItem:(NSTabViewItem*)tabViewItem {
   (void)tabView;
+  [self cancelInteractiveRendering];
   PDFTabContext* context = (PDFTabContext*)[tabViewItem identifier];
   if (context != nil) {
     [window_ setTitle:[NSString stringWithFormat:@"pdfview - %@", [context tabTitle]]];
@@ -1148,6 +1210,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)applicationWillTerminate:(NSNotification*)notification {
   (void)notification;
   [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [self cancelInteractiveRendering];
   if (keyMonitor_ != nil) {
     [NSEvent removeMonitor:keyMonitor_];
     keyMonitor_ = nil;
