@@ -91,7 +91,9 @@
 - (BOOL)applyZoomString:(NSString*)rawValue;
 - (IBAction)zoomComboBoxChanged:(id)sender;
 - (void)presentError:(NSString*)message;
-- (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap;
+- (CGFloat)deviceScaleFactor;
+- (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap
+                displaySize:(NSSize)displaySize;
 - (void)loadInitialDocuments;
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
 - (void)renderTabContext:(PDFTabContext*)context;
@@ -518,7 +520,9 @@
   [context->pageImageViews_ removeAllObjects];
   context->pageFrames_.clear();
 
-  const float scale = [self currentScaleForContext:context];
+  const float logicalScale = [self currentScaleForContext:context];
+  const CGFloat deviceScale = [self deviceScaleFactor];
+  const float renderScale = logicalScale * static_cast<float>(deviceScale);
   const CGFloat pageGap = 24.0f;
   const CGFloat topMargin = 20.0f;
   const CGFloat sideMargin = 16.0f;
@@ -530,8 +534,12 @@
 
   const int pageCount = context->document_->page_count();
   for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+    const pdfview::core::PageSize pageSize = context->document_->page_size(pageIndex);
+    const CGFloat displayWidth = pageSize.width * logicalScale;
+    const CGFloat displayHeight = pageSize.height * logicalScale;
+
     const pdfview::core::RenderPageResult renderResult =
-        context->document_->render_page(pageIndex, scale);
+        context->document_->render_page(pageIndex, renderScale);
     if (!renderResult.ok()) {
       [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
                                                     pageIndex + 1,
@@ -539,26 +547,25 @@
       continue;
     }
 
-    NSImage* image = [self imageFromBitmap:renderResult.bitmap];
+    NSImage* image = [self imageFromBitmap:renderResult.bitmap
+                               displaySize:NSMakeSize(displayWidth, displayHeight)];
     NSImageView* imageView = [[NSImageView alloc]
-        initWithFrame:NSMakeRect(0, 0, renderResult.bitmap.width, renderResult.bitmap.height)];
+        initWithFrame:NSMakeRect(0, 0, displayWidth, displayHeight)];
     [imageView setImage:image];
     [imageView setImageAlignment:NSImageAlignCenter];
     [imageView setImageScaling:NSImageScaleNone];
 
-    const CGFloat pageX =
-        std::max((clipSize.width - renderResult.bitmap.width) * 0.5, sideMargin);
-    const NSRect pageFrame =
-        NSMakeRect(pageX, cursorY, renderResult.bitmap.width, renderResult.bitmap.height);
+    const CGFloat pageX = std::max((clipSize.width - displayWidth) * 0.5, sideMargin);
+    const NSRect pageFrame = NSMakeRect(pageX, cursorY, displayWidth, displayHeight);
     [imageView setFrame:pageFrame];
     [context->documentView_ addSubview:imageView];
     [context->pageImageViews_ addObject:imageView];
     context->pageFrames_.push_back(pageFrame);
 
-    cursorY += renderResult.bitmap.height + pageGap;
+    cursorY += displayHeight + pageGap;
     documentWidth =
         std::max(documentWidth, pageFrame.origin.x + pageFrame.size.width + sideMargin);
-    maxPageWidth = std::max(maxPageWidth, static_cast<CGFloat>(renderResult.bitmap.width));
+    maxPageWidth = std::max(maxPageWidth, displayWidth);
   }
 
   const CGFloat documentHeight = std::max(cursorY, clipSize.height);
@@ -741,11 +748,20 @@
       return nil;
     }
 
-    return event;
+  return event;
   }];
 }
 
-- (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap {
+- (CGFloat)deviceScaleFactor {
+  NSScreen* screen = [window_ screen];
+  if (screen != nil) {
+    return std::max([screen backingScaleFactor], 1.0);
+  }
+  return 1.0;
+}
+
+- (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap
+                displaySize:(NSSize)displaySize {
   NSData* bitmapData =
       [NSData dataWithBytes:bitmap.pixels.data() length:bitmap.pixels.size()];
   CGDataProviderRef provider = CGDataProviderCreateWithCFData((CFDataRef)bitmapData);
@@ -763,7 +779,7 @@
                                      false,
                                      kCGRenderingIntentDefault);
   NSImage* image = [[NSImage alloc] initWithCGImage:cgImage
-                                               size:NSMakeSize(bitmap.width, bitmap.height)];
+                                               size:displaySize];
   CGImageRelease(cgImage);
   CGColorSpaceRelease(colorSpace);
   CGDataProviderRelease(provider);
