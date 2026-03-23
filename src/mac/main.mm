@@ -98,6 +98,7 @@
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
+- (IBAction)showHelp:(id)sender;
 @end
 
 @implementation AppDelegate {
@@ -179,6 +180,37 @@
   [fileMenu addItem:closeTabItem];
   [fileMenuItem setSubmenu:fileMenu];
 
+  NSMenuItem* windowMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:windowMenuItem];
+  NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+  NSMenuItem* minimizeItem = [[NSMenuItem alloc] initWithTitle:@"Minimize"
+                                                        action:@selector(performMiniaturize:)
+                                                 keyEquivalent:@"m"];
+  [windowMenu addItem:minimizeItem];
+  NSMenuItem* zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom"
+                                                    action:@selector(performZoom:)
+                                             keyEquivalent:@""];
+  [windowMenu addItem:zoomItem];
+  [windowMenu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem* bringAllToFrontItem =
+      [[NSMenuItem alloc] initWithTitle:@"Bring All to Front"
+                                 action:@selector(arrangeInFront:)
+                          keyEquivalent:@""];
+  [windowMenu addItem:bringAllToFrontItem];
+  [windowMenuItem setSubmenu:windowMenu];
+  [NSApp setWindowsMenu:windowMenu];
+
+  NSMenuItem* helpMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:helpMenuItem];
+  NSMenu* helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
+  NSMenuItem* helpItem = [[NSMenuItem alloc] initWithTitle:@"pdfview Help"
+                                                    action:@selector(showHelp:)
+                                             keyEquivalent:@"?"];
+  [helpItem setTarget:self];
+  [helpMenu addItem:helpItem];
+  [helpMenuItem setSubmenu:helpMenu];
+  [NSApp setHelpMenu:helpMenu];
+
   [NSApp setMainMenu:mainMenu];
 }
 
@@ -259,6 +291,15 @@
   if ([tabView_ numberOfTabViewItems] == 0) {
     [window_ setTitle:@"pdfview"];
   }
+}
+
+- (IBAction)showHelp:(id)sender {
+  (void)sender;
+  NSAlert* alert = [[NSAlert alloc] init];
+  [alert setAlertStyle:NSAlertStyleInformational];
+  [alert setMessageText:@"pdfview Help"];
+  [alert setInformativeText:@"Use File > Open... to open PDFs, tabs to switch documents, Cmd+W to close the current tab, and Cmd+Q to quit."];
+  [alert runModal];
 }
 
 - (PDFTabContext*)activeTabContext {
