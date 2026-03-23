@@ -21,7 +21,8 @@
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
 - (instancetype)initWithArgc:(int)argc argv:(const char*[])argv;
-- (void)showStatus;
+- (void)installMainMenu;
+- (void)presentError:(NSString*)message;
 - (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap;
 - (void)loadInitialDocument;
 - (void)renderDocument;
@@ -41,7 +42,6 @@
   NSWindow* window_;
   NSScrollView* scrollView_;
   NSView* documentView_;
-  NSTextField* statusLabel_;
   NSMutableArray* pageImageViews_;
   std::vector<NSRect> pageFrames_;
   pdfview::core::DocumentPtr document_;
@@ -85,9 +85,11 @@
   [window_ setDelegate:self];
   [window_ makeKeyAndOrderFront:nil];
 
+  [self installMainMenu];
+
   NSView* contentView = [window_ contentView];
 
-  scrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 52, 920, 688)];
+  scrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 960, 760)];
   [scrollView_ setHasVerticalScroller:YES];
   [scrollView_ setHasHorizontalScroller:YES];
   [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -101,16 +103,6 @@
   [[documentView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
   [scrollView_ setDocumentView:documentView_];
 
-  statusLabel_ = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 18, 920, 20)];
-  [statusLabel_ setBezeled:NO];
-  [statusLabel_ setDrawsBackground:NO];
-  [statusLabel_ setEditable:NO];
-  [statusLabel_ setSelectable:NO];
-  [statusLabel_ setFont:[NSFont systemFontOfSize:13]];
-  [statusLabel_ setAlignment:NSTextAlignmentLeft];
-  [statusLabel_ setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
-  [contentView addSubview:statusLabel_];
-
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(updateCurrentPageFromScroll)
                                                name:NSViewBoundsDidChangeNotification
@@ -122,18 +114,13 @@
 
 - (void)loadInitialDocument {
   if (argc_ <= 1) {
-#if defined(PDFVIEW_HAS_PDFIUM)
-    [statusLabel_ setStringValue:@"PDFium is enabled. Launch with a PDF path to render the document."];
-#else
-    [statusLabel_ setStringValue:@"PDFium is not enabled. Reconfigure with -DPDFVIEW_ENABLE_PDFIUM=ON and PDFIUM_ROOT."];
-#endif
     return;
   }
 
   documentPath_ = argv_[1];
   const pdfview::core::OpenDocumentResult result = pdfview::core::open_document(documentPath_);
   if (!result.ok()) {
-    [statusLabel_ setStringValue:[NSString stringWithFormat:@"Failed to open PDF: %s", result.error.c_str()]];
+    [self presentError:[NSString stringWithFormat:@"Failed to open PDF: %s", result.error.c_str()]];
     return;
   }
 
@@ -171,9 +158,9 @@
     const pdfview::core::RenderPageResult renderResult =
         document_->render_page(pageIndex, scale);
     if (!renderResult.ok()) {
-      [statusLabel_ setStringValue:[NSString stringWithFormat:@"Failed to render page %d: %s",
-                                                              pageIndex + 1,
-                                                              renderResult.error.c_str()]];
+      [self presentError:[NSString stringWithFormat:@"Failed to render page %d: %s",
+                                                    pageIndex + 1,
+                                                    renderResult.error.c_str()]];
       continue;
     }
 
@@ -198,7 +185,6 @@
 
   const CGFloat documentHeight = std::max(cursorY, clipSize.height);
   [documentView_ setFrame:NSMakeRect(0, 0, std::max(documentWidth, maxPageWidth + sideMargin * 2.0f), documentHeight)];
-  [self showStatus];
 }
 
 - (float)fitScaleForDocument {
@@ -269,7 +255,6 @@
 
   currentPage_ += 1;
   [self scrollToCurrentPage];
-  [self showStatus];
 }
 
 - (void)goToPreviousPage {
@@ -279,7 +264,6 @@
 
   currentPage_ -= 1;
   [self scrollToCurrentPage];
-  [self showStatus];
 }
 
 - (void)scrollToCurrentPage {
@@ -313,7 +297,6 @@
 
   if (nearestPage != currentPage_) {
     currentPage_ = nearestPage;
-    [self showStatus];
   }
 }
 
@@ -357,18 +340,29 @@
   }];
 }
 
-- (void)showStatus {
-  if (!document_ || currentPage_ < 0 || currentPage_ >= document_->page_count()) {
-    return;
-  }
+- (void)installMainMenu {
+  NSMenu* mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
+  NSMenuItem* appMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:appMenuItem];
 
-  const pdfview::core::PageSize pageSize = document_->page_size(currentPage_);
-  [statusLabel_ setStringValue:[NSString stringWithFormat:@"Page %d of %d, %.0f x %.0f pt, zoom %.0f%%",
-                                                          currentPage_ + 1,
-                                                          document_->page_count(),
-                                                          pageSize.width,
-                                                          pageSize.height,
-                                                          [self currentScale] * 100.0f]];
+  NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"pdfview"];
+  NSString* appName = @"pdfview";
+  NSMenuItem* quitItem =
+      [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Quit %@", appName]
+                                 action:@selector(terminate:)
+                          keyEquivalent:@"q"];
+  [appMenu addItem:quitItem];
+  [appMenuItem setSubmenu:appMenu];
+
+  [NSApp setMainMenu:mainMenu];
+}
+
+- (void)presentError:(NSString*)message {
+  NSAlert* alert = [[NSAlert alloc] init];
+  [alert setAlertStyle:NSAlertStyleCritical];
+  [alert setMessageText:@"pdfview"];
+  [alert setInformativeText:message];
+  [alert runModal];
 }
 
 - (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap {
