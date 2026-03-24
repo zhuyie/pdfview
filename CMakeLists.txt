@@ -71,6 +71,10 @@ function(pdfview_bundle_pdfium_runtime target_name)
 endfunction()
 
 if(BUILD_TESTING)
+    add_executable(pdfview_core_logic_tests tests/core_logic_tests.cpp)
+    target_link_libraries(pdfview_core_logic_tests PRIVATE pdfview_core)
+    add_test(NAME pdfview_core_logic_tests COMMAND pdfview_core_logic_tests)
+
     add_executable(pdfview_core_smoke tests/core_smoke.cpp)
     target_link_libraries(pdfview_core_smoke PRIVATE pdfview_core)
     pdfview_bundle_pdfium_runtime(pdfview_core_smoke)
