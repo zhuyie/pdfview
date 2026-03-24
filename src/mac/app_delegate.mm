@@ -3,7 +3,9 @@
 #include <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <algorithm>
+#include <chrono>
 
+#include "core/profiling.h"
 #include "core/document.h"
 #include "mac/render_coordinator.h"
 #include "mac/tab_context.h"
@@ -12,6 +14,12 @@ namespace {
 
 NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
+}
+
+double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
+  return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
+             std::chrono::steady_clock::now() - start)
+      .count();
 }
 
 }  // namespace
@@ -517,6 +525,7 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
     return;
   }
 
+  const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
   const CGFloat deviceScale = [self effectiveDeviceScaleForContext:context];
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
   [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
@@ -530,6 +539,7 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
 
   context->viewModel_.relayout();
   const pdfview::core::PageLayoutResult& layoutResult = context->viewModel_.layout_result();
+  const double layoutMilliseconds = MillisecondsSince(passStart);
   [context syncPageFrames];
 
   [context->documentView_
@@ -539,6 +549,24 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
                           layoutResult.document_height)];
   if ([self isContextActive:context]) {
     [self updateVisiblePagesForContext:context];
+  }
+
+  if (pdfview::core::render_profiling_enabled()) {
+    const pdfview::core::ViewRect visibleRect = context->viewModel_.visible_rect();
+    const int currentPage = context->viewModel_.view_state().current_page;
+    const double totalMilliseconds = MillisecondsSince(passStart);
+    pdfview::core::render_log("[pdfview] render_tab total_ms=%.2f layout_ms=%.2f viewport=%.0fx%.0f "
+                              "doc=%.0fx%.0f logical_scale=%.3f render_scale=%.3f current_page=%d scroll_y=%.0f",
+                              totalMilliseconds,
+                              layoutMilliseconds,
+                              clipSize.width,
+                              clipSize.height,
+                              layoutResult.document_width,
+                              layoutResult.document_height,
+                              context->viewModel_.current_logical_scale(),
+                              context->viewModel_.current_render_scale(),
+                              currentPage,
+                              visibleRect.y);
   }
 }
 

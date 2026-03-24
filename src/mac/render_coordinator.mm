@@ -2,20 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
-#include <cstdlib>
 
+#include "core/profiling.h"
 #include "mac/image_bridge.h"
 
 namespace {
-
-bool RenderProfilingEnabled() {
-  static const bool enabled = []() -> bool {
-    const char* value = std::getenv("PDFVIEW_PROFILE_RENDER");
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-  }();
-  return enabled;
-}
 
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
@@ -57,16 +48,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
-  double pdfRenderMilliseconds = 0.0;
-  double imageDecodeMilliseconds = 0.0;
   double imageApplyMilliseconds = 0.0;
-  int renderedPageCount = 0;
+  int submittedPageCount = 0;
   int discardedPageCount = 0;
   int keptPageCount = 0;
-  long long renderedPixelCount = 0;
+  long long submittedPixelCount = 0;
 
   [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
   context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
+  const pdfview::core::PageCachePlan cachePlan =
+      context->viewModel_.page_cache_plan(context->viewModel_.visible_rect().height * 0.5f);
   const pdfview::core::PageRenderPlan renderPlan = context->viewModel_.page_render_plan();
 
   for (size_t discardIndex = 0; discardIndex < renderPlan.pages_to_discard.size(); ++discardIndex) {
@@ -99,12 +90,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                                      requestId:requestId];
       });
       if (!shouldRender) {
-        if (RenderProfilingEnabled()) {
-          std::fprintf(stderr,
-                       "[pdfview] page_skip page=%d scale=%.3f request=%lld reason=stale_before_render\n",
-                       requestCopy.page_index,
-                       requestCopy.render_scale,
-                       requestId);
+        if (pdfview::core::render_profiling_enabled()) {
+          pdfview::core::render_log("[pdfview] page_skip page=%d scale=%.3f request=%lld reason=stale_before_render",
+                                    requestCopy.page_index,
+                                    requestCopy.render_scale,
+                                    requestId);
         }
         return;
       }
@@ -122,8 +112,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       });
     });
 
-    pdfRenderMilliseconds += 0.0;
-    renderedPageCount += 1;
+    submittedPageCount += 1;
+    submittedPixelCount +=
+        static_cast<long long>(request.display_width) * static_cast<long long>(request.display_height);
   }
 
   for (int pageIndex = renderPlan.keep_range.start; pageIndex < renderPlan.keep_range.end; ++pageIndex) {
@@ -135,21 +126,22 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     }
   }
 
-  if (RenderProfilingEnabled()) {
+  if (pdfview::core::render_profiling_enabled()) {
     const double totalMilliseconds = MillisecondsSince(passStart);
-    std::fprintf(stderr,
-                 "[pdfview] visible_update total_ms=%.2f pdf_ms=%.2f image_decode_ms=%.2f "
-                 "image_apply_ms=%.2f rendered=%d discarded=%d kept=%d pixels=%lld keep_range=%d..%d\n",
-                 totalMilliseconds,
-                 pdfRenderMilliseconds,
-                 imageDecodeMilliseconds,
-                 imageApplyMilliseconds,
-                 renderedPageCount,
-                 discardedPageCount,
-                 keptPageCount,
-                 renderedPixelCount,
-                 renderPlan.keep_range.start,
-                 renderPlan.keep_range.end);
+    pdfview::core::render_log("[pdfview] visible_update total_ms=%.2f image_apply_ms=%.2f submitted=%d "
+                              "discarded=%d kept=%d submit_pixels=%lld visible=%d..%d preload=%d..%d keep=%d..%d",
+                              totalMilliseconds,
+                              imageApplyMilliseconds,
+                              submittedPageCount,
+                              discardedPageCount,
+                              keptPageCount,
+                              submittedPixelCount,
+                              cachePlan.visible_range.start,
+                              cachePlan.visible_range.end,
+                              cachePlan.preload_range.start,
+                              cachePlan.preload_range.end,
+                              renderPlan.keep_range.start,
+                              renderPlan.keep_range.end);
   }
 }
 
@@ -190,15 +182,14 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [context markPageRendered:request.page_index renderScale:request.render_scale];
 
-  if (RenderProfilingEnabled()) {
-    std::fprintf(stderr,
-                 "[pdfview] page_render page=%d scale=%.3f pdf_ms=%.2f decode_ms=%.2f apply_ms=%.2f pixels=%d\n",
-                 request.page_index,
-                 request.render_scale,
-                 pdfMilliseconds,
-                 imageDecodeMilliseconds,
-                 imageApplyMilliseconds,
-                 renderResult.bitmap.width * renderResult.bitmap.height);
+  if (pdfview::core::render_profiling_enabled()) {
+    pdfview::core::render_log("[pdfview] page_render page=%d scale=%.3f pdf_ms=%.2f decode_ms=%.2f apply_ms=%.2f pixels=%d",
+                              request.page_index,
+                              request.render_scale,
+                              pdfMilliseconds,
+                              imageDecodeMilliseconds,
+                              imageApplyMilliseconds,
+                              renderResult.bitmap.width * renderResult.bitmap.height);
   }
 }
 
