@@ -50,7 +50,7 @@ target_link_libraries(pdfview_core PUBLIC "${PDFIUM_LIBRARY}")
 
 if(APPLE)
     enable_language(OBJCXX)
-    add_executable(pdfview_mac src/mac/image_bridge.mm src/mac/main.mm src/mac/tab_context.mm)
+    add_executable(pdfview_mac src/mac/image_bridge.mm src/mac/main.mm src/mac/render_coordinator.mm src/mac/tab_context.mm)
     target_link_libraries(pdfview_mac PRIVATE pdfview_core "-framework AppKit" "-framework UniformTypeIdentifiers")
     add_custom_command(TARGET pdfview_mac POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
