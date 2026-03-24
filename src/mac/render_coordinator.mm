@@ -56,9 +56,28 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
   context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
+  const float renderScale = context->viewModel_.current_render_scale();
   const pdfview::core::PageCachePlan cachePlan =
       context->viewModel_.page_cache_plan(context->viewModel_.visible_rect().height * 0.5f);
   const pdfview::core::PageRenderPlan renderPlan = context->viewModel_.page_render_plan();
+  if ([context shouldSkipVisibleUpdateForCachePlan:cachePlan
+                                        renderPlan:renderPlan
+                                       renderScale:renderScale]) {
+    if (pdfview::core::render_profiling_enabled()) {
+      pdfview::core::render_log("[pdfview] visible_update_skip reason=no_plan_change visible=%d..%d preload=%d..%d keep=%d..%d scale=%.3f",
+                                cachePlan.visible_range.start,
+                                cachePlan.visible_range.end,
+                                cachePlan.preload_range.start,
+                                cachePlan.preload_range.end,
+                                renderPlan.keep_range.start,
+                                renderPlan.keep_range.end,
+                                renderScale);
+    }
+    return;
+  }
+  [context rememberVisibleUpdateForCachePlan:cachePlan
+                                  renderPlan:renderPlan
+                                 renderScale:renderScale];
 
   for (size_t discardIndex = 0; discardIndex < renderPlan.pages_to_discard.size(); ++discardIndex) {
     const int pageIndex = renderPlan.pages_to_discard[discardIndex];
@@ -74,6 +93,21 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     const int pageIndex = request.page_index;
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
+      continue;
+    }
+    if (![context shouldSubmitRenderForPageIndex:pageIndex renderScale:request.render_scale]) {
+      if (pdfview::core::render_profiling_enabled()) {
+        const pdfview::core::PageCacheSlotState& state =
+            context->viewModel_.page_cache_states()[pageIndex];
+        const char* reason =
+            (state.pending && state.render_scale + 0.001f >= request.render_scale)
+                ? "pending_covering_scale"
+                : "loaded_covering_scale";
+        pdfview::core::render_log("[pdfview] page_submit_skip page=%d scale=%.3f reason=%s",
+                                  pageIndex,
+                                  request.render_scale,
+                                  reason);
+      }
       continue;
     }
 

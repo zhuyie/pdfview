@@ -6,6 +6,14 @@
 namespace pdfview {
 namespace core {
 
+namespace {
+
+bool CacheCoversRenderScale(const PageCacheSlotState& state, float target_render_scale) {
+  return state.render_scale + 0.001f >= target_render_scale;
+}
+
+}  // namespace
+
 std::vector<PageCacheSlotState> make_page_cache_states(int page_count) {
   return std::vector<PageCacheSlotState>(page_count);
 }
@@ -34,8 +42,8 @@ PageCacheUpdate plan_page_cache_update(const PageIndexRange& keep_range,
     const PageCacheSlotState& state = states[page_index];
 
     if (in_keep_range) {
-      const bool loaded_at_scale = state.loaded && state.render_scale == target_render_scale;
-      const bool pending_at_scale = state.pending && state.render_scale == target_render_scale;
+      const bool loaded_at_scale = state.loaded && CacheCoversRenderScale(state, target_render_scale);
+      const bool pending_at_scale = state.pending && CacheCoversRenderScale(state, target_render_scale);
       if (!loaded_at_scale && !pending_at_scale) {
         update.pages_to_render.push_back(page_index);
       }

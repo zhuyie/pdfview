@@ -1,5 +1,14 @@
 #import "mac/tab_context.h"
 
+namespace {
+
+bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
+                         const pdfview::core::PageIndexRange& rhs) {
+  return lhs.start == rhs.start && lhs.end == rhs.end;
+}
+
+}  // namespace
+
 @implementation FlippedDocumentView
 
 - (BOOL)isFlipped {
@@ -17,7 +26,6 @@
   if (self != nil) {
     viewModel_ = pdfview::core::DocumentViewModel(document);
     documentPath_ = path;
-    lastRenderScale_ = 0.0f;
 
     const int pageCount = viewModel_.page_count();
     pageImageViews_.resize(pageCount, nil);
@@ -57,7 +65,7 @@
     pageCache_[pageIndex].requestId = 0;
     [pageViewHost_ clearPageImageAtIndex:static_cast<int>(pageIndex)];
   }
-  lastRenderScale_ = 0.0f;
+  lastRenderPlanFingerprint_.valid = false;
 }
 
 - (BOOL)isRenderRequestCurrent:(int)pageIndex
@@ -70,6 +78,31 @@
   const PageRenderCacheEntry& cacheEntry = pageCache_[pageIndex];
   const pdfview::core::PageCacheSlotState& state = viewModel_.page_cache_states()[pageIndex];
   return cacheEntry.requestId == requestId && state.pending && state.render_scale == renderScale;
+}
+
+- (BOOL)hasPageImageAtIndex:(int)pageIndex {
+  if (pageIndex < 0 || pageIndex >= static_cast<int>(pageCache_.size())) {
+    return NO;
+  }
+
+  return pageCache_[pageIndex].image != nil;
+}
+
+- (BOOL)shouldSubmitRenderForPageIndex:(int)pageIndex renderScale:(float)renderScale {
+  if (pageIndex < 0 || pageIndex >= static_cast<int>(pageCache_.size())) {
+    return NO;
+  }
+
+  const pdfview::core::PageCacheSlotState& state = viewModel_.page_cache_states()[pageIndex];
+  if (state.pending && state.render_scale + 0.001f >= renderScale) {
+    return NO;
+  }
+
+  if (state.loaded && state.render_scale + 0.001f >= renderScale && [self hasPageImageAtIndex:pageIndex]) {
+    return NO;
+  }
+
+  return YES;
 }
 
 - (void)markPageDiscarded:(int)pageIndex {
@@ -91,7 +124,6 @@
   pdfview::core::mark_page_cache_rendered(viewModel_.mutable_page_cache_states(),
                                           pageIndex,
                                           renderScale);
-  lastRenderScale_ = renderScale;
 }
 
 - (void)markPageRequested:(int)pageIndex renderScale:(float)renderScale requestId:(long long)requestId {
@@ -141,6 +173,29 @@
 
 - (void)applyPageImage:(NSImage*)image atIndex:(int)pageIndex {
   [pageViewHost_ applyPageImage:image atIndex:pageIndex];
+}
+
+- (BOOL)shouldSkipVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
+                                 renderPlan:(const pdfview::core::PageRenderPlan&)renderPlan
+                                renderScale:(float)renderScale {
+  if (!lastRenderPlanFingerprint_.valid) {
+    return NO;
+  }
+
+  return lastRenderPlanFingerprint_.renderScale == renderScale &&
+         EqualPageIndexRange(lastRenderPlanFingerprint_.visibleRange, cachePlan.visible_range) &&
+         EqualPageIndexRange(lastRenderPlanFingerprint_.preloadRange, cachePlan.preload_range) &&
+         EqualPageIndexRange(lastRenderPlanFingerprint_.keepRange, renderPlan.keep_range);
+}
+
+- (void)rememberVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
+                               renderPlan:(const pdfview::core::PageRenderPlan&)renderPlan
+                              renderScale:(float)renderScale {
+  lastRenderPlanFingerprint_.renderScale = renderScale;
+  lastRenderPlanFingerprint_.visibleRange = cachePlan.visible_range;
+  lastRenderPlanFingerprint_.preloadRange = cachePlan.preload_range;
+  lastRenderPlanFingerprint_.keepRange = renderPlan.keep_range;
+  lastRenderPlanFingerprint_.valid = true;
 }
 
 @end

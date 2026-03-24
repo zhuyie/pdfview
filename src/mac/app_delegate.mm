@@ -531,11 +531,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
   context->viewModel_.set_viewport_size(clipSize.width, clipSize.height);
   context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
-  const float renderScale = context->viewModel_.current_render_scale();
-
-  if (std::abs(context->lastRenderScale_ - renderScale) > 0.001f) {
-    [context invalidateRenderedPages];
-  }
 
   context->viewModel_.relayout();
   const pdfview::core::PageLayoutResult& layoutResult = context->viewModel_.layout_result();
