@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(pdfview LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -47,6 +49,14 @@ endif()
 
 target_include_directories(pdfview_core PRIVATE "${PDFIUM_INCLUDE_DIR}")
 target_link_libraries(pdfview_core PUBLIC "${PDFIUM_LIBRARY}")
+
+if(BUILD_TESTING)
+    add_executable(pdfview_core_smoke tests/core_smoke.cpp)
+    target_link_libraries(pdfview_core_smoke PRIVATE pdfview_core)
+    add_test(NAME pdfview_core_smoke
+        COMMAND pdfview_core_smoke "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/smoke.pdf"
+    )
+endif()
 
 if(APPLE)
     enable_language(OBJCXX)
