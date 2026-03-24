@@ -1,0 +1,50 @@
+#pragma once
+
+#import <AppKit/AppKit.h>
+
+#include <string>
+#include <vector>
+
+#include "core/document_view_model.h"
+
+struct PageRenderCacheEntry {
+  NSImage* image;
+  long long requestId;
+
+  PageRenderCacheEntry() : image(nil), requestId(0) {}
+};
+
+@interface FlippedDocumentView : NSView
+@end
+
+@interface PDFTabContext : NSObject {
+ @public
+  std::string documentPath_;
+  NSView* containerView_;
+  NSScrollView* scrollView_;
+  FlippedDocumentView* documentView_;
+  pdfview::core::DocumentViewModel viewModel_;
+  std::vector<NSImageView*> pageImageViews_;
+  std::vector<PageRenderCacheEntry> pageCache_;
+  float lastRenderScale_;
+}
+
+- (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
+                            path:(const std::string&)path
+                           frame:(NSRect)frame;
+- (NSString*)tabTitle;
+- (void)invalidateRenderedPages;
+- (BOOL)isRenderRequestCurrent:(int)pageIndex
+                   renderScale:(float)renderScale
+                     requestId:(long long)requestId;
+- (void)markPageDiscarded:(int)pageIndex;
+- (void)markPageRendered:(int)pageIndex renderScale:(float)renderScale;
+- (void)markPageRequested:(int)pageIndex renderScale:(float)renderScale requestId:(long long)requestId;
+- (void)setManualScale:(float)scale;
+- (void)setUseFitScale:(BOOL)useFitScale;
+- (float)currentScale;
+- (void)setScrollOrigin:(NSPoint)origin;
+- (void)updateCurrentPageFromScroll;
+- (pdfview::core::ViewRect)currentPageRect;
+
+@end
