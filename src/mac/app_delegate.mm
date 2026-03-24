@@ -113,6 +113,8 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   [self installKeyMonitor];
   [self loadInitialDocuments];
   [window_ makeKeyAndOrderFront:nil];
+  [window_ orderFrontRegardless];
+  [NSApp activateIgnoringOtherApps:YES];
 }
 
 - (void)installMainMenu {

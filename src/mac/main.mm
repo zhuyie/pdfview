@@ -8,7 +8,6 @@ int main(int argc, const char* argv[]) {
     AppDelegate* delegate = [[AppDelegate alloc] initWithArgc:argc argv:argv];
     [app setActivationPolicy:NSApplicationActivationPolicyRegular];
     [app setDelegate:delegate];
-    [app activateIgnoringOtherApps:YES];
     [app run];
   }
   return 0;
