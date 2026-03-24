@@ -1,6 +1,5 @@
 #import <AppKit/AppKit.h>
 
-#include <CoreGraphics/CoreGraphics.h>
 #include <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <dispatch/dispatch.h>
 
@@ -12,8 +11,8 @@
 #include <vector>
 
 #include "core/document.h"
-#include "core/page_cache.h"
-#include "core/viewport.h"
+#include "core/document_view_model.h"
+#include "mac/image_bridge.h"
 
 struct PageRenderCacheEntry {
   NSImage* image;
@@ -35,33 +34,21 @@ struct PageRenderCacheEntry {
 
 @interface PDFTabContext : NSObject {
  @public
-  pdfview::core::DocumentPtr document_;
   std::string documentPath_;
   NSView* containerView_;
   NSScrollView* scrollView_;
   FlippedDocumentView* documentView_;
-  std::vector<pdfview::core::PageSize> pageSizes_;
+  pdfview::core::DocumentViewModel viewModel_;
   std::vector<NSImageView*> pageImageViews_;
-  std::vector<pdfview::core::PageCacheSlotState> pageCacheStates_;
   std::vector<PageRenderCacheEntry> pageCache_;
-  std::vector<pdfview::core::ViewRect> pageFrames_;
-  int currentPage_;
-  float manualScale_;
   float lastRenderScale_;
-  BOOL useFitScale_;
 }
 
 - (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
                             path:(const std::string&)path
                            frame:(NSRect)frame;
 - (NSString*)tabTitle;
-- (float)fitScaleForViewportWidth:(CGFloat)viewportWidth;
-- (float)currentScaleForViewportWidth:(CGFloat)viewportWidth;
 - (void)invalidateRenderedPages;
-- (pdfview::core::PageLayoutResult)layoutPagesForViewportSize:(NSSize)viewportSize;
-- (pdfview::core::PageCachePlan)pageCachePlanForVisibleRect:(const pdfview::core::ViewRect&)visibleRect;
-- (pdfview::core::PageRenderPlan)renderPlanForVisibleRect:(const pdfview::core::ViewRect&)visibleRect
-                                            deviceScale:(CGFloat)deviceScale;
 - (BOOL)isRenderRequestCurrent:(int)pageIndex
                    renderScale:(float)renderScale
                      requestId:(long long)requestId;
@@ -70,6 +57,10 @@ struct PageRenderCacheEntry {
 - (void)markPageRequested:(int)pageIndex renderScale:(float)renderScale requestId:(long long)requestId;
 - (void)setManualScale:(float)scale;
 - (void)setUseFitScale:(BOOL)useFitScale;
+- (float)currentScale;
+- (void)setScrollOrigin:(NSPoint)origin;
+- (void)updateCurrentPageFromScroll;
+- (pdfview::core::ViewRect)currentPageRect;
 
 @end
 
@@ -115,22 +106,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                            frame:(NSRect)frame {
   self = [super init];
   if (self != nil) {
-    document_ = document;
+    viewModel_ = pdfview::core::DocumentViewModel(document);
     documentPath_ = path;
-    currentPage_ = 0;
-    manualScale_ = 1.0f;
     lastRenderScale_ = 0.0f;
-    useFitScale_ = NO;
 
-    const int pageCount = document_ ? document_->page_count() : 0;
-    pageSizes_.resize(pageCount);
+    const int pageCount = viewModel_.page_count();
     pageImageViews_.resize(pageCount, nil);
-    pageCacheStates_ = pdfview::core::make_page_cache_states(pageCount);
     pageCache_.resize(pageCount);
-    pageFrames_.resize(pageCount);
-    for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
-      pageSizes_[pageIndex] = document_->page_size(pageIndex);
-    }
 
     containerView_ = [[NSView alloc] initWithFrame:frame];
     [containerView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -157,23 +139,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return [path lastPathComponent];
 }
 
-- (float)fitScaleForViewportWidth:(CGFloat)viewportWidth {
-  if (!document_ || pageSizes_.empty()) {
-    return 1.0f;
-  }
-
-  return pdfview::core::compute_fit_scale(pageSizes_, viewportWidth, 48.0f, 0.25f);
-}
-
-- (float)currentScaleForViewportWidth:(CGFloat)viewportWidth {
-  if (useFitScale_) {
-    return [self fitScaleForViewportWidth:viewportWidth];
-  }
-  return std::max(0.1f, manualScale_);
-}
-
 - (void)invalidateRenderedPages {
-  pdfview::core::invalidate_page_cache(&pageCacheStates_);
+  pdfview::core::invalidate_page_cache(viewModel_.mutable_page_cache_states());
   for (size_t pageIndex = 0; pageIndex < pageCache_.size(); ++pageIndex) {
     pageCache_[pageIndex].image = nil;
     pageCache_[pageIndex].requestId = 0;
@@ -184,37 +151,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   lastRenderScale_ = 0.0f;
 }
 
-- (pdfview::core::PageLayoutResult)layoutPagesForViewportSize:(NSSize)viewportSize {
-  pdfview::core::PageLayoutConfig layoutConfig;
-  layoutConfig.viewport_width = viewportSize.width;
-  layoutConfig.viewport_height = viewportSize.height;
-  layoutConfig.zoom = [self currentScaleForViewportWidth:viewportSize.width];
-  layoutConfig.top_margin = 20.0f;
-  layoutConfig.side_margin = 16.0f;
-  layoutConfig.page_gap = 24.0f;
-
-  const pdfview::core::PageLayoutResult layoutResult =
-      pdfview::core::compute_continuous_page_layout(pageSizes_, layoutConfig);
-  pageFrames_ = layoutResult.page_frames;
-  return layoutResult;
-}
-
-- (pdfview::core::PageCachePlan)pageCachePlanForVisibleRect:(const pdfview::core::ViewRect&)visibleRect {
-  return pdfview::core::compute_page_cache_plan(pageFrames_, visibleRect, visibleRect.height * 0.5f);
-}
-
-- (pdfview::core::PageRenderPlan)renderPlanForVisibleRect:(const pdfview::core::ViewRect&)visibleRect
-                                            deviceScale:(CGFloat)deviceScale {
-  const float renderScale =
-      [self currentScaleForViewportWidth:visibleRect.width] * static_cast<float>(deviceScale);
-  const pdfview::core::PageCachePlan cachePlan = [self pageCachePlanForVisibleRect:visibleRect];
-  return pdfview::core::plan_page_rendering(cachePlan.preload_range,
-                                            pageCacheStates_,
-                                            pageFrames_,
-                                            visibleRect,
-                                            renderScale);
-}
-
 - (BOOL)isRenderRequestCurrent:(int)pageIndex
                    renderScale:(float)renderScale
                      requestId:(long long)requestId {
@@ -223,7 +159,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   const PageRenderCacheEntry& cacheEntry = pageCache_[pageIndex];
-  const pdfview::core::PageCacheSlotState& state = pageCacheStates_[pageIndex];
+  const pdfview::core::PageCacheSlotState& state = viewModel_.page_cache_states()[pageIndex];
   return cacheEntry.requestId == requestId && state.pending && state.render_scale == renderScale;
 }
 
@@ -234,7 +170,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   pageCache_[pageIndex].image = nil;
   pageCache_[pageIndex].requestId = 0;
-  pdfview::core::mark_page_cache_discarded(&pageCacheStates_, pageIndex);
+  pdfview::core::mark_page_cache_discarded(viewModel_.mutable_page_cache_states(), pageIndex);
 }
 
 - (void)markPageRendered:(int)pageIndex renderScale:(float)renderScale {
@@ -243,7 +179,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   pageCache_[pageIndex].requestId = 0;
-  pdfview::core::mark_page_cache_rendered(&pageCacheStates_, pageIndex, renderScale);
+  pdfview::core::mark_page_cache_rendered(viewModel_.mutable_page_cache_states(),
+                                          pageIndex,
+                                          renderScale);
   lastRenderScale_ = renderScale;
 }
 
@@ -253,15 +191,35 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   pageCache_[pageIndex].requestId = requestId;
-  pdfview::core::mark_page_cache_requested(&pageCacheStates_, pageIndex, renderScale);
+  pdfview::core::mark_page_cache_requested(viewModel_.mutable_page_cache_states(),
+                                           pageIndex,
+                                           renderScale);
 }
 
 - (void)setManualScale:(float)scale {
-  manualScale_ = scale;
+  viewModel_.mutable_view_state()->zoom = scale;
 }
 
 - (void)setUseFitScale:(BOOL)useFitScale {
-  useFitScale_ = useFitScale;
+  viewModel_.mutable_view_state()->use_fit_scale = useFitScale;
+}
+
+- (float)currentScale {
+  return viewModel_.current_logical_scale();
+}
+
+- (void)setScrollOrigin:(NSPoint)origin {
+  pdfview::core::ViewState* state = viewModel_.mutable_view_state();
+  state->scroll_x = origin.x;
+  state->scroll_y = origin.y;
+}
+
+- (void)updateCurrentPageFromScroll {
+  viewModel_.update_current_page_from_scroll();
+}
+
+- (pdfview::core::ViewRect)currentPageRect {
+  return viewModel_.current_page_rect();
 }
 
 @end
@@ -276,8 +234,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (IBAction)zoomComboBoxChanged:(id)sender;
 - (void)presentError:(NSString*)message;
 - (CGFloat)deviceScaleFactor;
-- (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap
-                displaySize:(NSSize)displaySize;
 - (void)loadInitialDocuments;
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
 - (void)renderTabContext:(PDFTabContext*)context;
@@ -533,8 +489,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return NO;
   }
 
-  context->manualScale_ = std::max(static_cast<float>(zoomPercent / 100.0), 0.1f);
-  context->useFitScale_ = NO;
+  [context setManualScale:std::max(static_cast<float>(zoomPercent / 100.0), 0.1f)];
+  [context setUseFitScale:NO];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
   return YES;
@@ -765,30 +721,32 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)renderTabContext:(PDFTabContext*)context {
-  if (context == nil || !context->document_) {
+  if (context == nil || !context->viewModel_.document()) {
     return;
   }
 
   const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
   const CGFloat deviceScale = [self effectiveDeviceScaleForContext:context];
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
-  const float logicalScale = [context currentScaleForViewportWidth:clipSize.width];
-  const float renderScale = logicalScale * static_cast<float>(deviceScale);
+  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
+  context->viewModel_.set_viewport_size(clipSize.width, clipSize.height);
+  context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
+  const float renderScale = context->viewModel_.current_render_scale();
 
   if (std::abs(context->lastRenderScale_ - renderScale) > 0.001f) {
     [context invalidateRenderedPages];
   }
 
-  const pdfview::core::PageLayoutResult layoutResult =
-      [context layoutPagesForViewportSize:clipSize];
+  context->viewModel_.relayout();
+  const pdfview::core::PageLayoutResult& layoutResult = context->viewModel_.layout_result();
   const double layoutMilliseconds = MillisecondsSince(passStart);
 
-  const int pageCount = static_cast<int>(context->pageFrames_.size());
+  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
+  const int pageCount = static_cast<int>(pageFrames.size());
   for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
     NSImageView* imageView = context->pageImageViews_[pageIndex];
     if (imageView == nil) {
-      imageView = [[NSImageView alloc]
-          initWithFrame:NSRectFromViewRect(context->pageFrames_[pageIndex])];
+      imageView = [[NSImageView alloc] initWithFrame:NSRectFromViewRect(pageFrames[pageIndex])];
       [imageView setImageAlignment:NSImageAlignCenter];
       [imageView setImageScaling:NSImageScaleNone];
       [imageView setWantsLayer:YES];
@@ -797,7 +755,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       [context->documentView_ addSubview:imageView];
     }
 
-    [imageView setFrame:NSRectFromViewRect(context->pageFrames_[pageIndex])];
+    [imageView setFrame:NSRectFromViewRect(pageFrames[pageIndex])];
   }
 
   [context->documentView_
@@ -821,7 +779,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context {
-  if (context == nil || context->pageFrames_.empty()) {
+  if (context == nil || context->viewModel_.page_frames().empty()) {
     return;
   }
 
@@ -837,11 +795,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   int discardedPageCount = 0;
   int keptPageCount = 0;
   long long renderedPixelCount = 0;
-  const pdfview::core::ViewRect visibleRect =
-      ViewRectFromNSRect([[context->scrollView_ contentView] bounds]);
   const CGFloat deviceScale = [self effectiveDeviceScaleForContext:context];
+  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
+  context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
   const pdfview::core::PageRenderPlan renderPlan =
-      [context renderPlanForVisibleRect:visibleRect deviceScale:deviceScale];
+      context->viewModel_.page_render_plan();
 
   for (size_t discardIndex = 0; discardIndex < renderPlan.pages_to_discard.size(); ++discardIndex) {
     const int pageIndex = renderPlan.pages_to_discard[discardIndex];
@@ -865,7 +823,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
     const long long requestId = nextRenderRequestId_++;
     [context markPageRequested:pageIndex renderScale:request.render_scale requestId:requestId];
-    const pdfview::core::DocumentPtr document = context->document_;
+    const pdfview::core::DocumentPtr document = context->viewModel_.document();
     PDFTabContext* retainedContext = context;
     const pdfview::core::PageRenderRequest requestCopy = request;
     dispatch_async(renderQueue_, ^{
@@ -957,8 +915,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   const std::chrono::steady_clock::time_point imageDecodeStart = std::chrono::steady_clock::now();
   cacheEntry.image =
-      [self imageFromBitmap:renderResult.bitmap
-                displaySize:NSMakeSize(request.display_width, request.display_height)];
+      PDFViewImageFromBitmap(renderResult.bitmap,
+                             NSMakeSize(request.display_width, request.display_height));
   const double imageDecodeMilliseconds = MillisecondsSince(imageDecodeStart);
 
   double imageApplyMilliseconds = 0.0;
@@ -984,19 +942,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (float)fitScaleForContext:(PDFTabContext*)context {
-  if (context == nil || !context->document_ || context->document_->page_count() <= 0) {
+  if (context == nil || !context->viewModel_.document() || context->viewModel_.page_count() <= 0) {
     return 1.0f;
   }
 
-  const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
-  return [context fitScaleForViewportWidth:clipSize.width];
+  return context->viewModel_.fit_scale();
 }
 
 - (float)currentScaleForContext:(PDFTabContext*)context {
-  if (context->useFitScale_) {
-    return [self fitScaleForContext:context];
-  }
-  return std::max(0.1f, context->manualScale_);
+  return [context currentScale];
 }
 
 - (void)zoomIn {
@@ -1039,45 +993,49 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (void)goToNextPage {
   PDFTabContext* context = [self activeTabContext];
-  if (context == nil || context->currentPage_ + 1 >= context->document_->page_count()) {
+  if (context == nil ||
+      context->viewModel_.view_state().current_page + 1 >= context->viewModel_.page_count()) {
     return;
   }
 
-  context->currentPage_ += 1;
+  context->viewModel_.mutable_view_state()->current_page += 1;
   [self scrollToCurrentPageInContext:context];
 }
 
 - (void)goToPreviousPage {
   PDFTabContext* context = [self activeTabContext];
-  if (context == nil || context->currentPage_ <= 0) {
+  if (context == nil || context->viewModel_.view_state().current_page <= 0) {
     return;
   }
 
-  context->currentPage_ -= 1;
+  context->viewModel_.mutable_view_state()->current_page -= 1;
   [self scrollToCurrentPageInContext:context];
 }
 
 - (void)scrollToCurrentPageInContext:(PDFTabContext*)context {
-  if (context == nil ||
-      context->currentPage_ < 0 ||
-      context->currentPage_ >= static_cast<int>(context->pageFrames_.size())) {
+  if (context == nil) {
     return;
   }
 
   [self cancelInteractiveRendering];
-  const NSRect pageFrame = NSRectFromViewRect(context->pageFrames_[context->currentPage_]);
+  const pdfview::core::ViewRect pageRect = [context currentPageRect];
+  if (pageRect.width <= 0.0f || pageRect.height <= 0.0f) {
+    return;
+  }
+
+  const NSRect pageFrame = NSRectFromViewRect(pageRect);
   [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
+  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
   [self updateVisiblePagesForContext:context];
 }
 
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context {
-  if (context == nil || context->pageFrames_.empty()) {
+  if (context == nil || context->viewModel_.page_frames().empty()) {
     return;
   }
 
-  const NSRect visibleRect = [[context->scrollView_ contentView] bounds];
-  context->currentPage_ = pdfview::core::find_nearest_page_to_viewport_center(
-      context->pageFrames_, visibleRect.origin.y, visibleRect.size.height);
+  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
+  [context updateCurrentPageFromScroll];
 }
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
@@ -1148,32 +1106,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return 1.0;
 }
 
-- (NSImage*)imageFromBitmap:(const pdfview::core::Bitmap&)bitmap
-                displaySize:(NSSize)displaySize {
-  NSData* bitmapData =
-      [NSData dataWithBytes:bitmap.pixels.data() length:bitmap.pixels.size()];
-  CGDataProviderRef provider = CGDataProviderCreateWithCFData((CFDataRef)bitmapData);
-  CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-  CGImageRef cgImage = CGImageCreate(bitmap.width,
-                                     bitmap.height,
-                                     8,
-                                     32,
-                                     bitmap.stride,
-                                     colorSpace,
-                                     kCGBitmapByteOrder32Little |
-                                         kCGImageAlphaPremultipliedFirst,
-                                     provider,
-                                     NULL,
-                                     false,
-                                     kCGRenderingIntentDefault);
-  NSImage* image = [[NSImage alloc] initWithCGImage:cgImage
-                                               size:displaySize];
-  CGImageRelease(cgImage);
-  CGColorSpaceRelease(colorSpace);
-  CGDataProviderRelease(provider);
-  return image;
-}
-
 - (void)tabView:(NSTabView*)tabView didSelectTabViewItem:(NSTabViewItem*)tabViewItem {
   (void)tabView;
   [self cancelInteractiveRendering];
@@ -1200,7 +1132,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                                 std::max(contentRect.size.height - toolbarHeight, 0.0))];
     }
     [self renderTabContext:context];
-    if (context->useFitScale_) {
+    if (context->viewModel_.view_state().use_fit_scale) {
       [self scrollToCurrentPageInContext:context];
     }
   }
