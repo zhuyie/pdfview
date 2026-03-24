@@ -54,6 +54,7 @@ if(APPLE)
         src/mac/app_delegate.mm
         src/mac/image_bridge.mm
         src/mac/main.mm
+        src/mac/page_view_host.mm
         src/mac/render_coordinator.mm
         src/mac/tab_context.mm
     )

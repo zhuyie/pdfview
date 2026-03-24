@@ -530,23 +530,7 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
 
   context->viewModel_.relayout();
   const pdfview::core::PageLayoutResult& layoutResult = context->viewModel_.layout_result();
-
-  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
-  const int pageCount = static_cast<int>(pageFrames.size());
-  for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
-    NSImageView* imageView = context->pageImageViews_[pageIndex];
-    if (imageView == nil) {
-      imageView = [[NSImageView alloc] initWithFrame:NSRectFromViewRect(pageFrames[pageIndex])];
-      [imageView setImageAlignment:NSImageAlignCenter];
-      [imageView setImageScaling:NSImageScaleNone];
-      [imageView setWantsLayer:YES];
-      [[imageView layer] setBackgroundColor:[[NSColor whiteColor] CGColor]];
-      context->pageImageViews_[pageIndex] = imageView;
-      [context->documentView_ addSubview:imageView];
-    }
-
-    [imageView setFrame:NSRectFromViewRect(pageFrames[pageIndex])];
-  }
+  [context syncPageFrames];
 
   [context->documentView_
       setFrame:NSMakeRect(0,

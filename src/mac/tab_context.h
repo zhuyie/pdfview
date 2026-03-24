@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/document_view_model.h"
+#include "mac/page_view_host.h"
 
 struct PageRenderCacheEntry {
   NSImage* image;
@@ -25,6 +26,7 @@ struct PageRenderCacheEntry {
   FlippedDocumentView* documentView_;
   pdfview::core::DocumentViewModel viewModel_;
   std::vector<NSImageView*> pageImageViews_;
+  PDFPageViewHost* pageViewHost_;
   std::vector<PageRenderCacheEntry> pageCache_;
   float lastRenderScale_;
 }
@@ -46,5 +48,8 @@ struct PageRenderCacheEntry {
 - (void)setScrollOrigin:(NSPoint)origin;
 - (void)updateCurrentPageFromScroll;
 - (pdfview::core::ViewRect)currentPageRect;
+- (void)syncPageFrames;
+- (void)clearPageImageAtIndex:(int)pageIndex;
+- (void)applyPageImage:(NSImage*)image atIndex:(int)pageIndex;
 
 @end

@@ -73,10 +73,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     const int pageIndex = renderPlan.pages_to_discard[discardIndex];
     const std::chrono::steady_clock::time_point applyStart = std::chrono::steady_clock::now();
     [context markPageDiscarded:pageIndex];
-    NSImageView* imageView = context->pageImageViews_[pageIndex];
-    if (imageView != nil) {
-      [imageView setImage:nil];
-    }
+    [context clearPageImageAtIndex:pageIndex];
     imageApplyMilliseconds += MillisecondsSince(applyStart);
     discardedPageCount += 1;
   }
@@ -130,10 +127,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   for (int pageIndex = renderPlan.keep_range.start; pageIndex < renderPlan.keep_range.end; ++pageIndex) {
-    NSImageView* imageView = context->pageImageViews_[pageIndex];
-    if (imageView != nil && context->pageCache_[pageIndex].image != nil) {
+    if (context->pageCache_[pageIndex].image != nil) {
       const std::chrono::steady_clock::time_point applyStart = std::chrono::steady_clock::now();
-      [imageView setImage:context->pageCache_[pageIndex].image];
+      [context applyPageImage:context->pageCache_[pageIndex].image atIndex:pageIndex];
       imageApplyMilliseconds += MillisecondsSince(applyStart);
       keptPageCount += 1;
     }
@@ -188,12 +184,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   const double imageDecodeMilliseconds = MillisecondsSince(imageDecodeStart);
 
   double imageApplyMilliseconds = 0.0;
-  NSImageView* imageView = context->pageImageViews_[request.page_index];
-  if (imageView != nil) {
-    const std::chrono::steady_clock::time_point imageApplyStart = std::chrono::steady_clock::now();
-    [imageView setImage:cacheEntry.image];
-    imageApplyMilliseconds = MillisecondsSince(imageApplyStart);
-  }
+  const std::chrono::steady_clock::time_point imageApplyStart = std::chrono::steady_clock::now();
+  [context applyPageImage:cacheEntry.image atIndex:request.page_index];
+  imageApplyMilliseconds = MillisecondsSince(imageApplyStart);
 
   [context markPageRendered:request.page_index renderScale:request.render_scale];
 

@@ -37,6 +37,8 @@
     documentView_ = [[FlippedDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
     [documentView_ setWantsLayer:YES];
     [[documentView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
+    pageViewHost_ = [[PDFPageViewHost alloc] initWithDocumentView:documentView_
+                                                   pageImageViews:&pageImageViews_];
     [scrollView_ setDocumentView:documentView_];
     [containerView_ addSubview:scrollView_];
   }
@@ -53,9 +55,7 @@
   for (size_t pageIndex = 0; pageIndex < pageCache_.size(); ++pageIndex) {
     pageCache_[pageIndex].image = nil;
     pageCache_[pageIndex].requestId = 0;
-    if (pageImageViews_[pageIndex] != nil) {
-      [pageImageViews_[pageIndex] setImage:nil];
-    }
+    [pageViewHost_ clearPageImageAtIndex:static_cast<int>(pageIndex)];
   }
   lastRenderScale_ = 0.0f;
 }
@@ -129,6 +129,18 @@
 
 - (pdfview::core::ViewRect)currentPageRect {
   return viewModel_.current_page_rect();
+}
+
+- (void)syncPageFrames {
+  [pageViewHost_ syncPageFrames:viewModel_.page_frames()];
+}
+
+- (void)clearPageImageAtIndex:(int)pageIndex {
+  [pageViewHost_ clearPageImageAtIndex:pageIndex];
+}
+
+- (void)applyPageImage:(NSImage*)image atIndex:(int)pageIndex {
+  [pageViewHost_ applyPageImage:image atIndex:pageIndex];
 }
 
 @end
