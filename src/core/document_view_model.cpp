@@ -75,6 +75,7 @@ PageRenderPlan DocumentViewModel::page_render_plan() const {
   const PageCachePlan cache_plan =
       page_cache_plan(rect.height * 0.5f);
   return plan_page_rendering(cache_plan.preload_range,
+                             cache_plan.keep_range,
                              page_cache_states_,
                              layout_result_.page_frames,
                              rect,

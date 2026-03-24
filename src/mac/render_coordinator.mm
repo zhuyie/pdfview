@@ -69,8 +69,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                 cachePlan.visible_range.end,
                                 cachePlan.preload_range.start,
                                 cachePlan.preload_range.end,
-                                renderPlan.keep_range.start,
-                                renderPlan.keep_range.end,
+                                cachePlan.keep_range.start,
+                                cachePlan.keep_range.end,
                                 renderScale);
     }
     return;
@@ -174,8 +174,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                               cachePlan.visible_range.end,
                               cachePlan.preload_range.start,
                               cachePlan.preload_range.end,
-                              renderPlan.keep_range.start,
-                              renderPlan.keep_range.end);
+                              cachePlan.keep_range.start,
+                              cachePlan.keep_range.end);
   }
 }
 

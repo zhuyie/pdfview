@@ -185,7 +185,7 @@ bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
   return lastRenderPlanFingerprint_.renderScale == renderScale &&
          EqualPageIndexRange(lastRenderPlanFingerprint_.visibleRange, cachePlan.visible_range) &&
          EqualPageIndexRange(lastRenderPlanFingerprint_.preloadRange, cachePlan.preload_range) &&
-         EqualPageIndexRange(lastRenderPlanFingerprint_.keepRange, renderPlan.keep_range);
+         EqualPageIndexRange(lastRenderPlanFingerprint_.keepRange, cachePlan.keep_range);
 }
 
 - (void)rememberVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
@@ -194,7 +194,7 @@ bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
   lastRenderPlanFingerprint_.renderScale = renderScale;
   lastRenderPlanFingerprint_.visibleRange = cachePlan.visible_range;
   lastRenderPlanFingerprint_.preloadRange = cachePlan.preload_range;
-  lastRenderPlanFingerprint_.keepRange = renderPlan.keep_range;
+  lastRenderPlanFingerprint_.keepRange = cachePlan.keep_range;
   lastRenderPlanFingerprint_.valid = true;
 }
 

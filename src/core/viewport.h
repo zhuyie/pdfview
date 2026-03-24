@@ -41,6 +41,7 @@ struct PageCachePlan {
   ViewRect preload_rect;
   PageIndexRange visible_range;
   PageIndexRange preload_range;
+  PageIndexRange keep_range;
 };
 
 PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& page_sizes,

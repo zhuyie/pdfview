@@ -117,8 +117,15 @@ bool TestPageRenderPlanOrdering() {
   keep_range.start = 0;
   keep_range.end = 3;
 
+  pdfview::core::PageIndexRange render_range = keep_range;
+
   const pdfview::core::PageRenderPlan plan =
-      pdfview::core::plan_page_rendering(keep_range, states, page_frames, visible_rect, 2.0f);
+      pdfview::core::plan_page_rendering(render_range,
+                                         keep_range,
+                                         states,
+                                         page_frames,
+                                         visible_rect,
+                                         2.0f);
 
   return Expect(plan.render_requests.size() == 3, "all pages should be queued when scale changes") &&
          Expect(plan.render_requests[0].page_index == 1, "visible-center page should render first") &&
@@ -175,6 +182,32 @@ bool TestDocumentViewModel() {
          Expect(!render_plan.render_requests.empty(), "view model should request visible page rendering");
 }
 
+bool TestPageCachePlanKeepsNeighborPages() {
+  std::vector<pdfview::core::ViewRect> page_frames(5);
+  for (int index = 0; index < 5; ++index) {
+    page_frames[index].x = 0.0f;
+    page_frames[index].y = 20.0f + index * 220.0f;
+    page_frames[index].width = 100.0f;
+    page_frames[index].height = 200.0f;
+  }
+
+  pdfview::core::ViewRect visible_rect;
+  visible_rect.x = 0.0f;
+  visible_rect.y = 230.0f;
+  visible_rect.width = 100.0f;
+  visible_rect.height = 200.0f;
+
+  const pdfview::core::PageCachePlan plan =
+      pdfview::core::compute_page_cache_plan(page_frames, visible_rect, 100.0f);
+
+  return Expect(plan.visible_range.start == 1 && plan.visible_range.end == 2,
+                "visible range should contain the centered page") &&
+         Expect(plan.preload_range.start == 0 && plan.preload_range.end == 3,
+                "preload range should expand by viewport margin") &&
+         Expect(plan.keep_range.start == 0 && plan.keep_range.end == 4,
+                "keep range should retain one extra page on both sides");
+}
+
 }  // namespace
 
 int main() {
@@ -194,6 +227,9 @@ int main() {
     return 1;
   }
   if (!TestDocumentViewModel()) {
+    return 1;
+  }
+  if (!TestPageCachePlanKeepsNeighborPages()) {
     return 1;
   }
   return 0;

@@ -40,7 +40,8 @@ PageCacheUpdate plan_page_cache_update(const PageIndexRange& keep_range,
                                        const std::vector<PageCacheSlotState>& states,
                                        float target_render_scale);
 
-PageRenderPlan plan_page_rendering(const PageIndexRange& keep_range,
+PageRenderPlan plan_page_rendering(const PageIndexRange& render_range,
+                                   const PageIndexRange& keep_range,
                                    const std::vector<PageCacheSlotState>& states,
                                    const std::vector<ViewRect>& page_frames,
                                    const ViewRect& visible_rect,

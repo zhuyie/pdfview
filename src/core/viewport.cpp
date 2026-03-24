@@ -13,6 +13,20 @@ bool intersects(const ViewRect& lhs, const ViewRect& rhs) {
          lhs.y < rhs.y + rhs.height && rhs.y < lhs.y + lhs.height;
 }
 
+PageIndexRange ExpandPageRange(const PageIndexRange& range,
+                               int page_count,
+                               int extra_pages_before,
+                               int extra_pages_after) {
+  if (range.empty() || page_count <= 0) {
+    return PageIndexRange();
+  }
+
+  PageIndexRange expanded;
+  expanded.start = std::max(0, range.start - extra_pages_before);
+  expanded.end = std::min(page_count, range.end + extra_pages_after);
+  return expanded;
+}
+
 }  // namespace
 
 PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& page_sizes,
@@ -109,6 +123,10 @@ PageCachePlan compute_page_cache_plan(const std::vector<ViewRect>& page_frames,
   plan.preload_rect = expand_rect(visible_rect, 0.0f, preload_margin_y);
   plan.visible_range = find_intersecting_pages(page_frames, visible_rect);
   plan.preload_range = find_intersecting_pages(page_frames, plan.preload_rect);
+  plan.keep_range = ExpandPageRange(plan.preload_range,
+                                    static_cast<int>(page_frames.size()),
+                                    1,
+                                    1);
   return plan;
 }
 
