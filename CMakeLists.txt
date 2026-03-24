@@ -50,9 +50,30 @@ endif()
 target_include_directories(pdfview_core PRIVATE "${PDFIUM_INCLUDE_DIR}")
 target_link_libraries(pdfview_core PUBLIC "${PDFIUM_LIBRARY}")
 
+function(pdfview_bundle_pdfium_runtime target_name)
+    if(APPLE)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PDFIUM_ROOT}/lib/libpdfium.dylib"
+                "$<TARGET_FILE_DIR:${target_name}>/libpdfium.dylib"
+            COMMAND install_name_tool -id "@executable_path/libpdfium.dylib"
+                "$<TARGET_FILE_DIR:${target_name}>/libpdfium.dylib"
+            COMMAND install_name_tool -change "./libpdfium.dylib" "@executable_path/libpdfium.dylib"
+                "$<TARGET_FILE:${target_name}>"
+        )
+    elseif(WIN32)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PDFIUM_ROOT}/bin/pdfium.dll"
+                "$<TARGET_FILE_DIR:${target_name}>/pdfium.dll"
+        )
+    endif()
+endfunction()
+
 if(BUILD_TESTING)
     add_executable(pdfview_core_smoke tests/core_smoke.cpp)
     target_link_libraries(pdfview_core_smoke PRIVATE pdfview_core)
+    pdfview_bundle_pdfium_runtime(pdfview_core_smoke)
     add_test(NAME pdfview_core_smoke
         COMMAND pdfview_core_smoke "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/smoke.pdf"
     )
@@ -73,21 +94,9 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "pdfview"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.pdfview.app"
     )
-    add_custom_command(TARGET pdfview_mac POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${PDFIUM_ROOT}/lib/libpdfium.dylib"
-            "$<TARGET_FILE_DIR:pdfview_mac>/libpdfium.dylib"
-        COMMAND install_name_tool -id "@executable_path/libpdfium.dylib"
-            "$<TARGET_FILE_DIR:pdfview_mac>/libpdfium.dylib"
-        COMMAND install_name_tool -change "./libpdfium.dylib" "@executable_path/libpdfium.dylib"
-            "$<TARGET_FILE:pdfview_mac>"
-    )
+    pdfview_bundle_pdfium_runtime(pdfview_mac)
 elseif(WIN32)
     add_executable(pdfview_win WIN32 src/win/main.cpp)
     target_link_libraries(pdfview_win PRIVATE pdfview_core)
-    add_custom_command(TARGET pdfview_win POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${PDFIUM_ROOT}/bin/pdfium.dll"
-            "$<TARGET_FILE_DIR:pdfview_win>/pdfium.dll"
-    )
+    pdfview_bundle_pdfium_runtime(pdfview_win)
 endif()
