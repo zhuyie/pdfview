@@ -217,12 +217,18 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
 }
 
 - (void)layoutChrome {
-  PDFTabContext* context = [self activeTabContext];
-  if (tabView_ == nil || toolbarStrip_ == nil || context == nil) {
+  if (tabView_ == nil || toolbarStrip_ == nil) {
     return;
   }
 
   const CGFloat toolbarHeight = 32.0f;
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
+    [toolbarStrip_ setHidden:YES];
+    return;
+  }
+
+  [toolbarStrip_ setHidden:NO];
   const NSRect contentRect = [tabView_ contentRect];
   [context->containerView_ setFrame:contentRect];
   [toolbarStrip_ removeFromSuperview];
