@@ -39,6 +39,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context;
 - (BOOL)isContextActive:(PDFTabContext*)context;
 - (CGFloat)effectiveDeviceScaleForContext:(PDFTabContext*)context;
+- (BOOL)shouldReduceInteractiveScaleForContext:(PDFTabContext*)context
+                                   deviceScale:(CGFloat)deviceScale;
 - (void)beginInteractiveRenderingForContext:(PDFTabContext*)context;
 - (void)endInteractiveRendering:(NSTimer*)timer;
 - (void)cancelInteractiveRendering;
@@ -474,10 +476,48 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (CGFloat)effectiveDeviceScaleForContext:(PDFTabContext*)context {
   CGFloat deviceScale = [self deviceScaleFactor];
-  if (context != nil && context == interactiveRenderContext_) {
+  if ([self shouldReduceInteractiveScaleForContext:context deviceScale:deviceScale]) {
     deviceScale = std::max(1.0, deviceScale * 0.5);
   }
   return deviceScale;
+}
+
+- (BOOL)shouldReduceInteractiveScaleForContext:(PDFTabContext*)context
+                                   deviceScale:(CGFloat)deviceScale {
+  if (context == nil || context != interactiveRenderContext_ || deviceScale <= 1.0) {
+    return NO;
+  }
+
+  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
+  if (pageFrames.empty()) {
+    return NO;
+  }
+
+  const pdfview::core::ViewRect visibleRect = context->viewModel_.visible_rect();
+  const pdfview::core::PageCachePlan cachePlan =
+      context->viewModel_.page_cache_plan(visibleRect.height * 0.5f);
+  if (cachePlan.preload_range.empty()) {
+    return NO;
+  }
+
+  double totalVisiblePixels = 0.0;
+  double maxPagePixels = 0.0;
+  for (int pageIndex = cachePlan.preload_range.start;
+       pageIndex < cachePlan.preload_range.end;
+       ++pageIndex) {
+    if (pageIndex < 0 || pageIndex >= static_cast<int>(pageFrames.size())) {
+      continue;
+    }
+
+    const pdfview::core::ViewRect& frame = pageFrames[pageIndex];
+    const double pagePixels =
+        static_cast<double>(frame.width) * static_cast<double>(frame.height) *
+        static_cast<double>(deviceScale) * static_cast<double>(deviceScale);
+    totalVisiblePixels += pagePixels;
+    maxPagePixels = std::max(maxPagePixels, pagePixels);
+  }
+
+  return maxPagePixels >= 2500000.0 || totalVisiblePixels >= 5000000.0;
 }
 
 - (void)beginInteractiveRenderingForContext:(PDFTabContext*)context {
