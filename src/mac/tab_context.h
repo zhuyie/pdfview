@@ -53,7 +53,7 @@ struct RenderPlanFingerprint {
 - (void)markPageRendered:(int)pageIndex renderScale:(float)renderScale;
 - (void)markPageRequested:(int)pageIndex renderScale:(float)renderScale requestId:(long long)requestId;
 - (void)setManualScale:(float)scale;
-- (void)setUseFitScale:(BOOL)useFitScale;
+- (void)setScaleMode:(pdfview::core::ScaleMode)scaleMode;
 - (float)currentScale;
 - (void)setScrollOrigin:(NSPoint)origin;
 - (void)updateCurrentPageFromScroll;

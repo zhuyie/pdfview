@@ -44,11 +44,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)beginInteractiveRenderingForContext:(PDFTabContext*)context;
 - (void)endInteractiveRendering:(NSTimer*)timer;
 - (void)cancelInteractiveRendering;
-- (float)fitScaleForContext:(PDFTabContext*)context;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
 - (void)zoomOut;
-- (void)resetZoomToFit;
+- (void)resetZoomToFitWidth;
+- (void)fitZoomToPage;
 - (void)goToNextPage;
 - (void)goToPreviousPage;
 - (void)scrollToCurrentPageInContext:(PDFTabContext*)context;
@@ -68,6 +68,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSComboBox* zoomComboBox_;
   NSButton* zoomOutButton_;
   NSButton* zoomInButton_;
+  NSButton* fitWidthButton_;
+  NSButton* fitPageButton_;
   BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
   PDFRenderCoordinator* renderCoordinator_;
@@ -224,6 +226,20 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [zoomInButton_ setTarget:self];
   [zoomInButton_ setAction:@selector(zoomIn)];
   [toolbarStrip_ addSubview:zoomInButton_];
+
+  fitWidthButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(176, 4, 62, 22)];
+  [fitWidthButton_ setTitle:@"Width"];
+  [fitWidthButton_ setBezelStyle:NSBezelStyleTexturedRounded];
+  [fitWidthButton_ setTarget:self];
+  [fitWidthButton_ setAction:@selector(resetZoomToFitWidth)];
+  [toolbarStrip_ addSubview:fitWidthButton_];
+
+  fitPageButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(244, 4, 56, 22)];
+  [fitPageButton_ setTitle:@"Page"];
+  [fitPageButton_ setBezelStyle:NSBezelStyleTexturedRounded];
+  [fitPageButton_ setTarget:self];
+  [fitPageButton_ setAction:@selector(fitZoomToPage)];
+  [toolbarStrip_ addSubview:fitPageButton_];
 }
 
 - (void)layoutChrome {
@@ -264,6 +280,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (context == nil) {
     [zoomComboBox_ setStringValue:@""];
     [zoomComboBox_ setEnabled:NO];
+    [fitWidthButton_ setEnabled:NO];
+    [fitPageButton_ setEnabled:NO];
     return;
   }
 
@@ -272,6 +290,14 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   [zoomComboBox_ setEnabled:YES];
+  [fitWidthButton_ setEnabled:YES];
+  [fitPageButton_ setEnabled:YES];
+  [fitWidthButton_ setState:context->viewModel_.view_state().scale_mode == pdfview::core::ScaleMode::FitWidth
+                                ? NSControlStateValueOn
+                                : NSControlStateValueOff];
+  [fitPageButton_ setState:context->viewModel_.view_state().scale_mode == pdfview::core::ScaleMode::FitPage
+                               ? NSControlStateValueOn
+                               : NSControlStateValueOff];
   [zoomComboBox_ setStringValue:[NSString stringWithFormat:@"%.0f%%",
                                                            [self currentScaleForContext:context] * 100.0f]];
 }
@@ -292,7 +318,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   [context setManualScale:std::max(static_cast<float>(zoomPercent / 100.0), 0.1f)];
-  [context setUseFitScale:NO];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
   return YES;
@@ -613,14 +638,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                        deviceScale:deviceScale];
 }
 
-- (float)fitScaleForContext:(PDFTabContext*)context {
-  if (context == nil || !context->viewModel_.document() || context->viewModel_.page_count() <= 0) {
-    return 1.0f;
-  }
-
-  return context->viewModel_.fit_scale();
-}
-
 - (float)currentScaleForContext:(PDFTabContext*)context {
   return [context currentScale];
 }
@@ -633,7 +650,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [self cancelInteractiveRendering];
   [context setManualScale:std::min([self currentScaleForContext:context] * 1.25f, 5.0f)];
-  [context setUseFitScale:NO];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
 }
@@ -646,19 +662,30 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [self cancelInteractiveRendering];
   [context setManualScale:std::max([self currentScaleForContext:context] / 1.25f, 0.1f)];
-  [context setUseFitScale:NO];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
 }
 
-- (void)resetZoomToFit {
+- (void)resetZoomToFitWidth {
   PDFTabContext* context = [self activeTabContext];
   if (context == nil) {
     return;
   }
 
   [self cancelInteractiveRendering];
-  [context setUseFitScale:YES];
+  [context setScaleMode:pdfview::core::ScaleMode::FitWidth];
+  [self renderTabContext:context];
+  [self updateToolbarForActiveTab];
+}
+
+- (void)fitZoomToPage {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
+    return;
+  }
+
+  [self cancelInteractiveRendering];
+  [context setScaleMode:pdfview::core::ScaleMode::FitPage];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
 }
@@ -751,10 +778,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       [self zoomOut];
       return nil;
     }
-    if (key == '0') {
-      [self resetZoomToFit];
-      return nil;
-    }
     if (key == NSRightArrowFunctionKey || key == NSDownArrowFunctionKey ||
         key == 'j' || key == 'n') {
       [self goToNextPage];
@@ -804,7 +827,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                                 std::max(contentRect.size.height - toolbarHeight, 0.0))];
     }
     [self renderTabContext:context];
-    if (context->viewModel_.view_state().use_fit_scale) {
+    if (context->viewModel_.view_state().scale_mode != pdfview::core::ScaleMode::Manual) {
       [self scrollToCurrentPageInContext:context];
     }
   }

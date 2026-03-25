@@ -165,7 +165,7 @@ bool TestDocumentViewModel() {
   pdfview::core::DocumentViewModel view_model(document);
   view_model.set_viewport_size(500.0f, 300.0f);
   view_model.set_device_scale(2.0f);
-  view_model.mutable_view_state()->use_fit_scale = true;
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::FitWidth;
   view_model.relayout();
 
   const float expected_scale = (500.0f - 48.0f) / 400.0f;
@@ -180,6 +180,25 @@ bool TestDocumentViewModel() {
          Expect(NearlyEqual(first_rect.y, 20.0f), "current page rect before scrolling is incorrect") &&
          Expect(view_model.view_state().current_page == 1, "view model current page tracking is incorrect") &&
          Expect(!render_plan.render_requests.empty(), "view model should request visible page rendering");
+}
+
+bool TestFitPageScale() {
+  std::vector<pdfview::core::PageSize> page_sizes(2);
+  page_sizes[0].width = 400.0f;
+  page_sizes[0].height = 800.0f;
+  page_sizes[1].width = 600.0f;
+  page_sizes[1].height = 300.0f;
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.set_viewport_size(500.0f, 300.0f);
+  view_model.mutable_view_state()->current_page = 0;
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::FitPage;
+
+  return Expect(NearlyEqual(view_model.fit_page_scale(), 252.0f / 800.0f),
+                "fit page scale should clamp to viewport height for tall pages") &&
+         Expect(NearlyEqual(view_model.current_logical_scale(), 252.0f / 800.0f),
+                "current scale should use fit page mode");
 }
 
 bool TestPageCachePlanKeepsNeighborPages() {
@@ -230,6 +249,9 @@ int main() {
     return 1;
   }
   if (!TestPageCachePlanKeepsNeighborPages()) {
+    return 1;
+  }
+  if (!TestFitPageScale()) {
     return 1;
   }
   return 0;

@@ -25,7 +25,7 @@ void DocumentViewModel::set_device_scale(float scale) {
   device_scale_ = std::max(scale, 1.0f);
 }
 
-float DocumentViewModel::fit_scale() const {
+float DocumentViewModel::fit_width_scale() const {
   if (!document_ || page_sizes_.empty()) {
     return 1.0f;
   }
@@ -33,9 +33,38 @@ float DocumentViewModel::fit_scale() const {
   return compute_fit_scale(page_sizes_, viewport_width_, 48.0f, 0.25f);
 }
 
+float DocumentViewModel::fit_page_scale() const {
+  if (!document_ || page_sizes_.empty()) {
+    return 1.0f;
+  }
+
+  int page_index = view_state_.current_page;
+  if (page_index < 0 || page_index >= static_cast<int>(page_sizes_.size())) {
+    page_index = 0;
+  }
+
+  const PageSize& page_size = page_sizes_[page_index];
+  if (page_size.width <= 0.0f || page_size.height <= 0.0f) {
+    return 1.0f;
+  }
+
+  const float fit_width = compute_fit_scale(std::vector<PageSize>(1, page_size),
+                                            viewport_width_,
+                                            48.0f,
+                                            0.25f);
+  const float target_height = std::max(viewport_height_ - 48.0f, 120.0f);
+  const float fit_height = std::max(target_height / page_size.height, 0.25f);
+  return std::min(fit_width, fit_height);
+}
+
 float DocumentViewModel::current_logical_scale() const {
-  if (view_state_.use_fit_scale) {
-    return fit_scale();
+  switch (view_state_.scale_mode) {
+    case ScaleMode::FitWidth:
+      return fit_width_scale();
+    case ScaleMode::FitPage:
+      return fit_page_scale();
+    case ScaleMode::Manual:
+      break;
   }
 
   return std::max(0.1f, view_state_.zoom);

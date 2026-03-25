@@ -36,7 +36,8 @@ class DocumentViewModel {
   float viewport_height() const { return viewport_height_; }
   float device_scale() const { return device_scale_; }
 
-  float fit_scale() const;
+  float fit_width_scale() const;
+  float fit_page_scale() const;
   float current_logical_scale() const;
   float current_render_scale() const;
 

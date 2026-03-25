@@ -138,11 +138,12 @@ bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
 }
 
 - (void)setManualScale:(float)scale {
+  viewModel_.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::Manual;
   viewModel_.mutable_view_state()->zoom = scale;
 }
 
-- (void)setUseFitScale:(BOOL)useFitScale {
-  viewModel_.mutable_view_state()->use_fit_scale = useFitScale;
+- (void)setScaleMode:(pdfview::core::ScaleMode)scaleMode {
+  viewModel_.mutable_view_state()->scale_mode = scaleMode;
 }
 
 - (float)currentScale {
