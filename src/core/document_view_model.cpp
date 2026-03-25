@@ -91,6 +91,17 @@ void DocumentViewModel::set_scroll_origin(float x, float y) {
   view_state_.scroll_y = y;
 }
 
+ViewportAnchor DocumentViewModel::capture_viewport_anchor() const {
+  return pdfview::core::capture_viewport_anchor(layout_result_.page_frames, view_state_.scroll_y);
+}
+
+float DocumentViewModel::restored_scroll_y_for_anchor(const ViewportAnchor& anchor) const {
+  return pdfview::core::restore_viewport_anchor(anchor,
+                                                layout_result_.page_frames,
+                                                viewport_height_,
+                                                layout_result_.document_height);
+}
+
 ViewRect DocumentViewModel::visible_rect() const {
   ViewRect rect;
   rect.x = view_state_.scroll_x;
@@ -124,6 +135,16 @@ void DocumentViewModel::update_current_page_from_scroll() {
 
   view_state_.current_page = find_nearest_page_to_viewport_center(
       layout_result_.page_frames, view_state_.scroll_y, viewport_height_);
+}
+
+float DocumentViewModel::scroll_y_for_current_page() const {
+  const ViewRect rect = current_page_rect();
+  if (rect.height <= 0.0f) {
+    return view_state_.scroll_y;
+  }
+
+  const float max_scroll_y = std::max(layout_result_.document_height - viewport_height_, 0.0f);
+  return std::min(std::max(rect.y, 0.0f), max_scroll_y);
 }
 
 ViewRect DocumentViewModel::current_page_rect() const {

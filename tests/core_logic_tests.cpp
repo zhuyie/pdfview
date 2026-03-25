@@ -251,6 +251,46 @@ bool TestDocumentViewModel() {
          Expect(!render_plan.render_requests.empty(), "view model should request visible page rendering");
 }
 
+bool TestDocumentViewModelViewportAnchorRestore() {
+  std::vector<pdfview::core::PageSize> page_sizes(1);
+  page_sizes[0].width = 400.0f;
+  page_sizes[0].height = 1200.0f;
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.set_viewport_size(500.0f, 300.0f);
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::Manual;
+  view_model.mutable_view_state()->zoom = 3.0f;
+  view_model.relayout();
+  view_model.set_scroll_origin(0.0f, 1160.0f);
+
+  const pdfview::core::ViewportAnchor anchor = view_model.capture_viewport_anchor();
+
+  view_model.mutable_view_state()->zoom = 1.0f;
+  view_model.relayout();
+
+  return Expect(NearlyEqual(view_model.restored_scroll_y_for_anchor(anchor), 400.0f),
+                "view model should restore the captured viewport anchor after relayout");
+}
+
+bool TestDocumentViewModelScrollYForCurrentPage() {
+  std::vector<pdfview::core::PageSize> page_sizes(3);
+  for (int index = 0; index < 3; ++index) {
+    page_sizes[index].width = 400.0f;
+    page_sizes[index].height = 400.0f;
+  }
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.set_viewport_size(500.0f, 300.0f);
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::FitWidth;
+  view_model.mutable_view_state()->current_page = 2;
+  view_model.relayout();
+
+  return Expect(NearlyEqual(view_model.scroll_y_for_current_page(), 972.0f),
+                "scroll target for the current page should align to the page top and clamp to the document");
+}
+
 bool TestFitPageScale() {
   std::vector<pdfview::core::PageSize> page_sizes(2);
   page_sizes[0].width = 400.0f;
@@ -386,6 +426,12 @@ int main() {
     return 1;
   }
   if (!TestDocumentViewModel()) {
+    return 1;
+  }
+  if (!TestDocumentViewModelViewportAnchorRestore()) {
+    return 1;
+  }
+  if (!TestDocumentViewModelScrollYForCurrentPage()) {
     return 1;
   }
   if (!TestPageCachePlanKeepsNeighborPages()) {

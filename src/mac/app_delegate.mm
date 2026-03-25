@@ -616,10 +616,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self updateCurrentPageFromScrollForContext:context];
 
   const NSRect visibleBounds = [[context->scrollView_ contentView] bounds];
-  const CGFloat viewportHeight = visibleBounds.size.height;
-  const std::vector<pdfview::core::ViewRect>& oldPageFrames = context->viewModel_.page_frames();
-  const pdfview::core::ViewportAnchor anchor =
-      pdfview::core::capture_viewport_anchor(oldPageFrames, visibleBounds.origin.y);
+  const pdfview::core::ViewportAnchor anchor = context->viewModel_.capture_viewport_anchor();
   const int anchorPageIndex = anchor.page_index;
 
   updateMode(context);
@@ -631,18 +628,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self renderTabContext:context];
   context->viewModel_.mutable_view_state()->current_page = anchorPageIndex;
 
-  pdfview::core::ViewRect newPageRect;
-  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
-  if (anchorPageIndex >= 0 && anchorPageIndex < static_cast<int>(pageFrames.size())) {
-    newPageRect = pageFrames[anchorPageIndex];
-  }
+  const pdfview::core::ViewRect newPageRect = context->viewModel_.current_page_rect();
   if (newPageRect.height > 0.0f) {
     NSClipView* clipView = [context->scrollView_ contentView];
-    const CGFloat targetOriginY = pdfview::core::restore_viewport_anchor(
-        anchor,
-        pageFrames,
-        viewportHeight,
-        context->viewModel_.layout_result().document_height);
+    const CGFloat targetOriginY = context->viewModel_.restored_scroll_y_for_anchor(anchor);
     [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
     [context->scrollView_ reflectScrolledClipView:clipView];
     context->viewModel_.set_scroll_origin([clipView bounds].origin.x, [clipView bounds].origin.y);
@@ -798,8 +787,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  const NSRect pageFrame = NSRectFromViewRect(pageRect);
-  [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
+  NSClipView* clipView = [context->scrollView_ contentView];
+  [clipView scrollToPoint:NSMakePoint([clipView bounds].origin.x,
+                                      context->viewModel_.scroll_y_for_current_page())];
+  [context->scrollView_ reflectScrolledClipView:clipView];
   context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
                                         [[context->scrollView_ contentView] bounds].origin.y);
   [self updateVisiblePagesForContext:context];

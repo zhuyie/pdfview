@@ -43,11 +43,13 @@ class DocumentViewModel {
 
   void relayout();
   void set_scroll_origin(float x, float y);
+  ViewportAnchor capture_viewport_anchor() const;
+  float restored_scroll_y_for_anchor(const ViewportAnchor& anchor) const;
   ViewRect visible_rect() const;
   PageCachePlan page_cache_plan(float preload_margin_y) const;
   PageRenderPlan page_render_plan() const;
   void update_current_page_from_scroll();
-
+  float scroll_y_for_current_page() const;
   ViewRect current_page_rect() const;
 
  private:
