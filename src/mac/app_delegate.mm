@@ -24,6 +24,40 @@
 
 @end
 
+@interface EdgeFadeView : NSView
+- (instancetype)initWithLeadingEdge:(BOOL)isLeadingEdge;
+@end
+
+@implementation EdgeFadeView {
+  BOOL isLeadingEdge_;
+}
+
+- (instancetype)initWithLeadingEdge:(BOOL)isLeadingEdge {
+  self = [super initWithFrame:NSZeroRect];
+  if (self != nil) {
+    isLeadingEdge_ = isLeadingEdge;
+  }
+  return self;
+}
+
+- (BOOL)isOpaque {
+  return NO;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+  (void)dirtyRect;
+  NSColor* solidColor = [NSColor colorWithCalibratedWhite:0.94 alpha:1.0];
+  NSColor* softColor = [NSColor colorWithCalibratedWhite:0.94 alpha:0.32];
+  NSColor* clearColor = [NSColor colorWithCalibratedWhite:0.94 alpha:0.0];
+  NSArray<NSColor*>* colors = isLeadingEdge_
+                                  ? @[ solidColor, softColor, clearColor ]
+                                  : @[ clearColor, softColor, solidColor ];
+  NSGradient* gradient = [[NSGradient alloc] initWithColors:colors];
+  [gradient drawInRect:[self bounds] angle:0.0];
+}
+
+@end
+
 namespace {
 
 NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
@@ -46,6 +80,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)installToolbarStripInView:(NSView*)contentView;
 - (void)layoutChrome;
 - (void)rebuildTabStrip;
+- (void)computeTabStripMetrics:(std::vector<CGFloat>*)tabWidths
+                    totalWidth:(CGFloat*)totalTabWidth
+                    trackWidth:(CGFloat*)trackWidth
+              visibleTrackWidth:(CGFloat*)visibleTrackWidth
+                     maxOffset:(CGFloat*)maxOffset
+            needsScrollButtons:(BOOL*)needsScrollButtons;
+- (CGFloat)tabStripOffsetByStepping:(NSInteger)direction;
 - (IBAction)scrollTabStripLeft:(id)sender;
 - (IBAction)scrollTabStripRight:(id)sender;
 - (void)updateToolbarForActiveTab;
@@ -97,6 +138,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSWindow* window_;
   NSView* tabBarView_;
   NSView* tabStripContentView_;
+  NSView* tabStripRightFadeView_;
   NSView* contentHostView_;
   NSButton* tabScrollLeftButton_;
   NSButton* tabScrollRightButton_;
@@ -329,6 +371,145 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [openRecentMenu_ addItem:clearItem];
 }
 
+- (void)computeTabStripMetrics:(std::vector<CGFloat>*)tabWidths
+                    totalWidth:(CGFloat*)totalTabWidth
+                    trackWidth:(CGFloat*)trackWidth
+              visibleTrackWidth:(CGFloat*)visibleTrackWidth
+                     maxOffset:(CGFloat*)maxOffset
+            needsScrollButtons:(BOOL*)needsScrollButtons {
+  if (tabWidths != nullptr) {
+    tabWidths->clear();
+    tabWidths->reserve([tabContexts_ count]);
+  }
+  if (totalTabWidth != nullptr) {
+    *totalTabWidth = 0.0f;
+  }
+
+  const CGFloat tabGap = 8.0f;
+  const CGFloat leadingInset = 10.0f;
+  const CGFloat trailingInset = 10.0f;
+  const CGFloat leftPadding = 12.0f;
+  const CGFloat closeButtonSize = 22.0f;
+  const CGFloat closeRightInset = 8.0f;
+  const CGFloat titleToCloseGap = 8.0f;
+  const CGFloat rightReserved = closeButtonSize + closeRightInset + titleToCloseGap;
+  const CGFloat scrollButtonWidth = 22.0f;
+  const CGFloat scrollButtonGap = 6.0f;
+  const CGFloat scrollButtonsLeftGap = 10.0f;
+  const CGFloat fadeWidth = 32.0f;
+
+  CGFloat computedTotalWidth = 0.0f;
+  for (PDFTabContext* context in tabContexts_) {
+    NSString* title = [context tabTitle];
+    NSDictionary* attributes = @{
+      NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+    };
+    const CGFloat titleWidth = std::ceil([title sizeWithAttributes:attributes].width);
+    const CGFloat tabWidth =
+        std::min(std::max(titleWidth + leftPadding + rightReserved + 4.0, 150.0), 320.0);
+    if (tabWidths != nullptr) {
+      tabWidths->push_back(tabWidth);
+    }
+    computedTotalWidth += tabWidth;
+  }
+
+  if ([tabContexts_ count] > 1) {
+    computedTotalWidth += tabGap * ([tabContexts_ count] - 1);
+  }
+
+  const CGFloat fullTrackWidth =
+      std::max(NSWidth([tabBarView_ bounds]) - leadingInset - trailingInset, 0.0);
+  const BOOL shouldShowScrollButtons = computedTotalWidth > fullTrackWidth;
+  const CGFloat buttonAreaWidth =
+      shouldShowScrollButtons
+          ? (scrollButtonWidth * 2.0f + scrollButtonGap + scrollButtonsLeftGap)
+          : 0.0f;
+  const CGFloat computedTrackWidth = std::max(fullTrackWidth - buttonAreaWidth, 0.0);
+  const CGFloat computedVisibleTrackWidth =
+      std::max(computedTrackWidth - (shouldShowScrollButtons ? fadeWidth : 0.0f), 0.0);
+  const CGFloat computedMaxOffset = std::max(computedTotalWidth - computedTrackWidth, 0.0);
+
+  if (totalTabWidth != nullptr) {
+    *totalTabWidth = computedTotalWidth;
+  }
+  if (trackWidth != nullptr) {
+    *trackWidth = computedTrackWidth;
+  }
+  if (visibleTrackWidth != nullptr) {
+    *visibleTrackWidth = computedVisibleTrackWidth;
+  }
+  if (maxOffset != nullptr) {
+    *maxOffset = computedMaxOffset;
+  }
+  if (needsScrollButtons != nullptr) {
+    *needsScrollButtons = shouldShowScrollButtons;
+  }
+}
+
+- (CGFloat)tabStripOffsetByStepping:(NSInteger)direction {
+  std::vector<CGFloat> tabWidths;
+  CGFloat totalTabWidth = 0.0f;
+  CGFloat trackWidth = 0.0f;
+  CGFloat visibleTrackWidth = 0.0f;
+  CGFloat maxOffset = 0.0f;
+  BOOL needsScrollButtons = NO;
+  [self computeTabStripMetrics:&tabWidths
+                    totalWidth:&totalTabWidth
+                    trackWidth:&trackWidth
+              visibleTrackWidth:&visibleTrackWidth
+                     maxOffset:&maxOffset
+            needsScrollButtons:&needsScrollButtons];
+  (void)totalTabWidth;
+
+  if (!needsScrollButtons || tabWidths.empty()) {
+    return 0.0f;
+  }
+
+  const CGFloat tabGap = 8.0f;
+  const CGFloat currentOffset = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
+  const CGFloat visibleStart = currentOffset;
+  const CGFloat visibleEnd = currentOffset + visibleTrackWidth;
+
+  CGFloat x = 0.0f;
+  if (direction > 0) {
+    for (CGFloat tabWidth : tabWidths) {
+      const CGFloat tabStart = x;
+      const CGFloat tabEnd = x + tabWidth;
+      if (tabEnd > visibleEnd + 0.5f) {
+        return std::min(tabStart, maxOffset);
+      }
+      x = tabEnd + tabGap;
+    }
+    return maxOffset;
+  }
+
+  for (CGFloat tabWidth : tabWidths) {
+    const CGFloat tabStart = x;
+    const CGFloat tabEnd = x + tabWidth;
+    if (tabStart >= visibleStart - 0.5f) {
+      break;
+    }
+    if (tabEnd > visibleStart + 0.5f) {
+      return tabStart;
+    }
+    x = tabEnd + tabGap;
+  }
+
+  CGFloat previousStart = 0.0f;
+  x = 0.0f;
+  for (CGFloat tabWidth : tabWidths) {
+    const CGFloat tabStart = x;
+    const CGFloat tabEnd = x + tabWidth;
+    if (tabEnd >= visibleStart - 0.5f) {
+      return previousStart;
+    }
+    previousStart = tabStart;
+    x = tabEnd + tabGap;
+  }
+
+  return 0.0f;
+}
+
 - (void)rebuildTabStrip {
   if (tabBarView_ == nil) {
     return;
@@ -338,6 +519,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   for (NSView* subview in subviews) {
     if ([subview isKindOfClass:[NSBox class]] ||
         subview == tabStripContentView_ ||
+        subview == tabStripRightFadeView_ ||
         subview == tabScrollLeftButton_ ||
         subview == tabScrollRightButton_) {
       continue;
@@ -354,6 +536,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     tabStripScrollOffset_ = 0.0f;
     [tabScrollLeftButton_ setHidden:YES];
     [tabScrollRightButton_ setHidden:YES];
+    [tabStripRightFadeView_ setHidden:YES];
     return;
   }
 
@@ -370,35 +553,19 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   const CGFloat scrollButtonWidth = 22.0f;
   const CGFloat scrollButtonGap = 6.0f;
   const CGFloat scrollButtonsLeftGap = 12.0f;
-
+  const CGFloat fadeWidth = 32.0f;
   std::vector<CGFloat> tabWidths;
-  tabWidths.reserve([tabContexts_ count]);
   CGFloat totalTabWidth = 0.0f;
-  for (PDFTabContext* context in tabContexts_) {
-    NSString* title = [context tabTitle];
-    NSDictionary* attributes = @{
-      NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
-    };
-    const CGFloat titleWidth =
-        std::ceil([title sizeWithAttributes:attributes].width);
-    const CGFloat tabWidth =
-        std::min(std::max(titleWidth + leftPadding + rightReserved + 4.0, 150.0), 320.0);
-    tabWidths.push_back(tabWidth);
-    totalTabWidth += tabWidth;
-  }
-  if ([tabContexts_ count] > 1) {
-    totalTabWidth += tabGap * ([tabContexts_ count] - 1);
-  }
-
-  const CGFloat fullTrackWidth =
-      std::max(NSWidth([tabBarView_ bounds]) - leadingInset - trailingInset, 0.0);
-  const BOOL needsScrollButtons = totalTabWidth > fullTrackWidth;
-  const CGFloat buttonAreaWidth =
-      needsScrollButtons
-          ? (scrollButtonWidth * 2.0f + scrollButtonGap + scrollButtonsLeftGap)
-          : 0.0f;
-  const CGFloat trackWidth = std::max(fullTrackWidth - buttonAreaWidth, 0.0);
-  const CGFloat maxOffset = std::max(totalTabWidth - trackWidth, 0.0);
+  CGFloat trackWidth = 0.0f;
+  CGFloat visibleTrackWidth = 0.0f;
+  CGFloat maxOffset = 0.0f;
+  BOOL needsScrollButtons = NO;
+  [self computeTabStripMetrics:&tabWidths
+                    totalWidth:&totalTabWidth
+                    trackWidth:&trackWidth
+              visibleTrackWidth:&visibleTrackWidth
+                     maxOffset:&maxOffset
+            needsScrollButtons:&needsScrollButtons];
   tabStripScrollOffset_ = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
 
   NSUInteger selectedIndex = NSNotFound;
@@ -417,8 +584,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     const CGFloat selectedMaxX = selectedMinX + tabWidths[selectedIndex];
     if (selectedMinX < tabStripScrollOffset_) {
       tabStripScrollOffset_ = selectedMinX;
-    } else if (selectedMaxX > tabStripScrollOffset_ + trackWidth) {
-      tabStripScrollOffset_ = selectedMaxX - trackWidth;
+    } else if (selectedMaxX > tabStripScrollOffset_ + visibleTrackWidth) {
+      tabStripScrollOffset_ = selectedMaxX - visibleTrackWidth;
     }
     tabStripScrollOffset_ = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
   }
@@ -430,6 +597,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                             0.0f,
                                             trackWidth,
                                             NSHeight([tabBarView_ bounds]))];
+  const BOOL hasClippedTabsBehindFade =
+      needsScrollButtons && (tabStripScrollOffset_ < maxOffset - 0.5f);
+  [tabStripRightFadeView_ setFrame:NSMakeRect(leadingInset + trackWidth - fadeWidth,
+                                              1.0f,
+                                              fadeWidth,
+                                              NSHeight([tabBarView_ bounds]) - 1.0f)];
+  [tabStripRightFadeView_ setHidden:!hasClippedTabsBehindFade];
   if (needsScrollButtons) {
     const CGFloat buttonY = 6.0f;
     const CGFloat rightButtonX = NSWidth([tabBarView_ bounds]) - trailingInset - scrollButtonWidth;
@@ -437,7 +611,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [tabScrollLeftButton_ setFrame:NSMakeRect(leftButtonX, buttonY, scrollButtonWidth, 22.0f)];
     [tabScrollRightButton_ setFrame:NSMakeRect(rightButtonX, buttonY, scrollButtonWidth, 22.0f)];
     [tabScrollLeftButton_ setEnabled:tabStripScrollOffset_ > 0.5f];
-    [tabScrollRightButton_ setEnabled:tabStripScrollOffset_ + trackWidth < totalTabWidth - 0.5f];
+    [tabScrollRightButton_ setEnabled:tabStripScrollOffset_ + visibleTrackWidth < totalTabWidth - 0.5f];
   }
 
   CGFloat x = -tabStripScrollOffset_;
@@ -522,6 +696,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   if (needsScrollButtons) {
+    [tabBarView_ addSubview:tabStripRightFadeView_ positioned:NSWindowAbove relativeTo:nil];
     [tabBarView_ addSubview:tabScrollLeftButton_ positioned:NSWindowAbove relativeTo:nil];
     [tabBarView_ addSubview:tabScrollRightButton_ positioned:NSWindowAbove relativeTo:nil];
   }
@@ -553,6 +728,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [tabStripContentView_ setWantsLayer:YES];
   [[tabStripContentView_ layer] setMasksToBounds:YES];
   [tabBarView_ addSubview:tabStripContentView_];
+
+  tabStripRightFadeView_ = [[EdgeFadeView alloc] initWithLeadingEdge:NO];
+  [tabStripRightFadeView_ setFrame:NSMakeRect(0, 0, 32, 34)];
+  [tabStripRightFadeView_ setAutoresizingMask:NSViewMinXMargin | NSViewHeightSizable];
+  [tabStripRightFadeView_ setHidden:YES];
+  [tabBarView_ addSubview:tabStripRightFadeView_ positioned:NSWindowAbove relativeTo:tabStripContentView_];
 
   NSBox* divider = [[NSBox alloc] initWithFrame:NSMakeRect(0, 0, 100, 1)];
   [divider setBoxType:NSBoxSeparator];
@@ -990,14 +1171,14 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (IBAction)scrollTabStripLeft:(id)sender {
   (void)sender;
-  tabStripScrollOffset_ = std::max(tabStripScrollOffset_ - 220.0, 0.0);
+  tabStripScrollOffset_ = [self tabStripOffsetByStepping:-1];
   shouldEnsureSelectedTabVisible_ = NO;
   [self rebuildTabStrip];
 }
 
 - (IBAction)scrollTabStripRight:(id)sender {
   (void)sender;
-  tabStripScrollOffset_ += 220.0f;
+  tabStripScrollOffset_ = [self tabStripOffsetByStepping:1];
   shouldEnsureSelectedTabVisible_ = NO;
   [self rebuildTabStrip];
 }
