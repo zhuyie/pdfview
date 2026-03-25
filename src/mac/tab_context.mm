@@ -2,13 +2,6 @@
 
 namespace {
 
-const float kMaxCoveringScaleRatio = 1.5f;
-
-bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
-                         const pdfview::core::PageIndexRange& rhs) {
-  return lhs.start == rhs.start && lhs.end == rhs.end;
-}
-
 }  // namespace
 
 @implementation FlippedDocumentView
@@ -96,18 +89,9 @@ bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
   }
 
   const pdfview::core::PageCacheSlotState& state = viewModel_.page_cache_states()[pageIndex];
-  const BOOL coveringScale =
-      state.render_scale + 0.001f >= renderScale &&
-      state.render_scale <= renderScale * kMaxCoveringScaleRatio + 0.001f;
-  if (state.pending && coveringScale) {
-    return NO;
-  }
-
-  if (state.loaded && coveringScale && [self hasPageImageAtIndex:pageIndex]) {
-    return NO;
-  }
-
-  return YES;
+  return pdfview::core::should_submit_page_render(state,
+                                                  [self hasPageImageAtIndex:pageIndex],
+                                                  renderScale);
 }
 
 - (void)markPageDiscarded:(int)pageIndex {
@@ -182,26 +166,16 @@ bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
 }
 
 - (BOOL)shouldSkipVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
-                                 renderPlan:(const pdfview::core::PageRenderPlan&)renderPlan
                                 renderScale:(float)renderScale {
-  if (!lastRenderPlanFingerprint_.valid) {
-    return NO;
-  }
-
-  return lastRenderPlanFingerprint_.renderScale == renderScale &&
-         EqualPageIndexRange(lastRenderPlanFingerprint_.visibleRange, cachePlan.visible_range) &&
-         EqualPageIndexRange(lastRenderPlanFingerprint_.preloadRange, cachePlan.preload_range) &&
-         EqualPageIndexRange(lastRenderPlanFingerprint_.keepRange, cachePlan.keep_range);
+  return pdfview::core::render_plan_matches_fingerprint(lastRenderPlanFingerprint_,
+                                                        cachePlan,
+                                                        renderScale);
 }
 
 - (void)rememberVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
-                               renderPlan:(const pdfview::core::PageRenderPlan&)renderPlan
                               renderScale:(float)renderScale {
-  lastRenderPlanFingerprint_.renderScale = renderScale;
-  lastRenderPlanFingerprint_.visibleRange = cachePlan.visible_range;
-  lastRenderPlanFingerprint_.preloadRange = cachePlan.preload_range;
-  lastRenderPlanFingerprint_.keepRange = cachePlan.keep_range;
-  lastRenderPlanFingerprint_.valid = true;
+  lastRenderPlanFingerprint_ =
+      pdfview::core::render_plan_fingerprint_for_visible_update(cachePlan, renderScale);
 }
 
 @end

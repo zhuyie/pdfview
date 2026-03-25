@@ -15,14 +15,6 @@ struct PageRenderCacheEntry {
   PageRenderCacheEntry() : image(nil), requestId(0) {}
 };
 
-struct RenderPlanFingerprint {
-  float renderScale = 0.0f;
-  pdfview::core::PageIndexRange visibleRange;
-  pdfview::core::PageIndexRange preloadRange;
-  pdfview::core::PageIndexRange keepRange;
-  bool valid = false;
-};
-
 @interface FlippedDocumentView : NSView
 @end
 
@@ -36,7 +28,7 @@ struct RenderPlanFingerprint {
   std::vector<NSImageView*> pageImageViews_;
   PDFPageViewHost* pageViewHost_;
   std::vector<PageRenderCacheEntry> pageCache_;
-  RenderPlanFingerprint lastRenderPlanFingerprint_;
+  pdfview::core::RenderPlanFingerprint lastRenderPlanFingerprint_;
 }
 
 - (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
@@ -62,10 +54,8 @@ struct RenderPlanFingerprint {
 - (void)clearPageImageAtIndex:(int)pageIndex;
 - (void)applyPageImage:(NSImage*)image atIndex:(int)pageIndex;
 - (BOOL)shouldSkipVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
-                                 renderPlan:(const pdfview::core::PageRenderPlan&)renderPlan
                                 renderScale:(float)renderScale;
 - (void)rememberVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
-                               renderPlan:(const pdfview::core::PageRenderPlan&)renderPlan
                               renderScale:(float)renderScale;
 
 @end

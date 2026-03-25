@@ -168,6 +168,59 @@ bool TestOverlargeScaleTriggersDownsampleRerender() {
                 "significantly oversized cached pages should be rerendered at a lower scale");
 }
 
+bool TestShouldSubmitPageRender() {
+  pdfview::core::PageCacheSlotState state;
+  state.pending = true;
+  state.render_scale = 1.4f;
+  const bool skip_pending_cover =
+      !pdfview::core::should_submit_page_render(state, false, 1.0f);
+
+  state.pending = false;
+  state.loaded = true;
+  const bool skip_loaded_cover =
+      !pdfview::core::should_submit_page_render(state, true, 1.0f);
+  const bool rerender_without_image =
+      pdfview::core::should_submit_page_render(state, false, 1.0f);
+
+  state.render_scale = 3.0f;
+  const bool rerender_oversized =
+      pdfview::core::should_submit_page_render(state, true, 1.0f);
+
+  return Expect(skip_pending_cover,
+                "pending pages at a covering scale should not be resubmitted") &&
+         Expect(skip_loaded_cover,
+                "loaded pages with an image at a covering scale should not rerender") &&
+         Expect(rerender_without_image,
+                "loaded pages without an image should still be renderable") &&
+         Expect(rerender_oversized,
+                "significantly oversized cached pages should rerender after zooming out");
+}
+
+bool TestRenderPlanFingerprint() {
+  pdfview::core::PageCachePlan plan;
+  plan.visible_range.start = 1;
+  plan.visible_range.end = 3;
+  plan.preload_range.start = 0;
+  plan.preload_range.end = 4;
+  plan.keep_range.start = 0;
+  plan.keep_range.end = 5;
+
+  const pdfview::core::RenderPlanFingerprint fingerprint =
+      pdfview::core::render_plan_fingerprint_for_visible_update(plan, 2.0f);
+  const bool matches_same =
+      pdfview::core::render_plan_matches_fingerprint(fingerprint, plan, 2.0f);
+  const bool rejects_other_scale =
+      !pdfview::core::render_plan_matches_fingerprint(fingerprint, plan, 1.0f);
+
+  plan.keep_range.end = 4;
+  const bool rejects_other_keep =
+      !pdfview::core::render_plan_matches_fingerprint(fingerprint, plan, 2.0f);
+
+  return Expect(matches_same, "matching cache plans should hit the same fingerprint") &&
+         Expect(rejects_other_scale, "fingerprints should include render scale") &&
+         Expect(rejects_other_keep, "fingerprints should include keep range");
+}
+
 bool TestDocumentViewModel() {
   std::vector<pdfview::core::PageSize> page_sizes(3);
   page_sizes[0].width = 400.0f;
@@ -324,6 +377,12 @@ int main() {
     return 1;
   }
   if (!TestOverlargeScaleTriggersDownsampleRerender()) {
+    return 1;
+  }
+  if (!TestShouldSubmitPageRender()) {
+    return 1;
+  }
+  if (!TestRenderPlanFingerprint()) {
     return 1;
   }
   if (!TestDocumentViewModel()) {

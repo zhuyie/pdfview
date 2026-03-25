@@ -8,8 +8,6 @@
 
 namespace {
 
-const float kMaxCoveringScaleRatio = 1.5f;
-
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
              std::chrono::steady_clock::now() - start)
@@ -63,7 +61,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       context->viewModel_.page_cache_plan(context->viewModel_.visible_rect().height * 0.5f);
   const pdfview::core::PageRenderPlan renderPlan = context->viewModel_.page_render_plan();
   if ([context shouldSkipVisibleUpdateForCachePlan:cachePlan
-                                        renderPlan:renderPlan
                                        renderScale:renderScale]) {
     if (pdfview::core::render_profiling_enabled()) {
       pdfview::core::record_visible_update_skip();
@@ -79,7 +76,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
   [context rememberVisibleUpdateForCachePlan:cachePlan
-                                  renderPlan:renderPlan
                                  renderScale:renderScale];
 
   for (size_t discardIndex = 0; discardIndex < renderPlan.pages_to_discard.size(); ++discardIndex) {
@@ -104,8 +100,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
         const pdfview::core::PageCacheSlotState& state =
             context->viewModel_.page_cache_states()[pageIndex];
         const BOOL coveringScale =
-            state.render_scale + 0.001f >= request.render_scale &&
-            state.render_scale <= request.render_scale * kMaxCoveringScaleRatio + 0.001f;
+            pdfview::core::cache_covers_render_scale(state, request.render_scale);
         const char* reason =
             (state.pending && coveringScale)
                 ? "pending_covering_scale"

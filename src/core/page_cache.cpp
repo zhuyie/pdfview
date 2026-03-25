@@ -10,9 +10,8 @@ namespace {
 
 const float kMaxCoveringScaleRatio = 1.5f;
 
-bool CacheCoversRenderScale(const PageCacheSlotState& state, float target_render_scale) {
-  return state.render_scale + 0.001f >= target_render_scale &&
-         state.render_scale <= target_render_scale * kMaxCoveringScaleRatio + 0.001f;
+bool EqualPageIndexRange(const PageIndexRange& lhs, const PageIndexRange& rhs) {
+  return lhs.start == rhs.start && lhs.end == rhs.end;
 }
 
 }  // namespace
@@ -33,6 +32,26 @@ void invalidate_page_cache(std::vector<PageCacheSlotState>* states) {
   }
 }
 
+bool cache_covers_render_scale(const PageCacheSlotState& state, float target_render_scale) {
+  return state.render_scale + 0.001f >= target_render_scale &&
+         state.render_scale <= target_render_scale * kMaxCoveringScaleRatio + 0.001f;
+}
+
+bool should_submit_page_render(const PageCacheSlotState& state,
+                               bool has_page_image,
+                               float target_render_scale) {
+  const bool covering_scale = cache_covers_render_scale(state, target_render_scale);
+  if (state.pending && covering_scale) {
+    return false;
+  }
+
+  if (state.loaded && covering_scale && has_page_image) {
+    return false;
+  }
+
+  return true;
+}
+
 PageCacheUpdate plan_page_cache_update(const PageIndexRange& keep_range,
                                        const std::vector<PageCacheSlotState>& states,
                                        float target_render_scale) {
@@ -45,8 +64,8 @@ PageCacheUpdate plan_page_cache_update(const PageIndexRange& keep_range,
     const PageCacheSlotState& state = states[page_index];
 
     if (in_keep_range) {
-      const bool loaded_at_scale = state.loaded && CacheCoversRenderScale(state, target_render_scale);
-      const bool pending_at_scale = state.pending && CacheCoversRenderScale(state, target_render_scale);
+      const bool loaded_at_scale = state.loaded && cache_covers_render_scale(state, target_render_scale);
+      const bool pending_at_scale = state.pending && cache_covers_render_scale(state, target_render_scale);
       if (!loaded_at_scale && !pending_at_scale) {
         update.pages_to_render.push_back(page_index);
       }
@@ -141,6 +160,31 @@ void mark_page_cache_discarded(std::vector<PageCacheSlotState>* states, int page
   (*states)[page_index].loaded = false;
   (*states)[page_index].pending = false;
   (*states)[page_index].render_scale = 0.0f;
+}
+
+RenderPlanFingerprint render_plan_fingerprint_for_visible_update(
+    const PageCachePlan& cache_plan,
+    float render_scale) {
+  RenderPlanFingerprint fingerprint;
+  fingerprint.render_scale = render_scale;
+  fingerprint.visible_range = cache_plan.visible_range;
+  fingerprint.preload_range = cache_plan.preload_range;
+  fingerprint.keep_range = cache_plan.keep_range;
+  fingerprint.valid = true;
+  return fingerprint;
+}
+
+bool render_plan_matches_fingerprint(const RenderPlanFingerprint& fingerprint,
+                                     const PageCachePlan& cache_plan,
+                                     float render_scale) {
+  if (!fingerprint.valid) {
+    return false;
+  }
+
+  return fingerprint.render_scale == render_scale &&
+         EqualPageIndexRange(fingerprint.visible_range, cache_plan.visible_range) &&
+         EqualPageIndexRange(fingerprint.preload_range, cache_plan.preload_range) &&
+         EqualPageIndexRange(fingerprint.keep_range, cache_plan.keep_range);
 }
 
 }  // namespace core
