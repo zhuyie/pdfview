@@ -1,5 +1,9 @@
 # Architecture
 
+See also:
+
+- [Viewer Scroll, Zoom, and Rendering](./viewer_scroll_zoom_rendering.md)
+
 ## Module Layout
 
 ### `src/core`
