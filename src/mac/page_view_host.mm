@@ -34,9 +34,10 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
     if (imageView == nil) {
       imageView = [[NSImageView alloc] initWithFrame:NSRectFromViewRect(pageFrames[pageIndex])];
       [imageView setImageAlignment:NSImageAlignCenter];
-      [imageView setImageScaling:NSImageScaleNone];
+      [imageView setImageScaling:NSImageScaleProportionallyUpOrDown];
       [imageView setWantsLayer:YES];
       [[imageView layer] setBackgroundColor:[[NSColor whiteColor] CGColor]];
+      [[imageView layer] setMasksToBounds:YES];
       (*pageImageViews_)[pageIndex] = imageView;
       [documentView_ addSubview:imageView];
     }

@@ -8,8 +8,11 @@ namespace core {
 
 namespace {
 
+const float kMaxCoveringScaleRatio = 1.5f;
+
 bool CacheCoversRenderScale(const PageCacheSlotState& state, float target_render_scale) {
-  return state.render_scale + 0.001f >= target_render_scale;
+  return state.render_scale + 0.001f >= target_render_scale &&
+         state.render_scale <= target_render_scale * kMaxCoveringScaleRatio + 0.001f;
 }
 
 }  // namespace

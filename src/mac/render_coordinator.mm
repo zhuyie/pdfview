@@ -8,6 +8,8 @@
 
 namespace {
 
+const float kMaxCoveringScaleRatio = 1.5f;
+
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
              std::chrono::steady_clock::now() - start)
@@ -101,8 +103,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
         pdfview::core::record_page_submit_skip();
         const pdfview::core::PageCacheSlotState& state =
             context->viewModel_.page_cache_states()[pageIndex];
+        const BOOL coveringScale =
+            state.render_scale + 0.001f >= request.render_scale &&
+            state.render_scale <= request.render_scale * kMaxCoveringScaleRatio + 0.001f;
         const char* reason =
-            (state.pending && state.render_scale + 0.001f >= request.render_scale)
+            (state.pending && coveringScale)
                 ? "pending_covering_scale"
                 : "loaded_covering_scale";
         pdfview::core::render_log("[pdfview] page_submit_skip page=%d scale=%.3f reason=%s",

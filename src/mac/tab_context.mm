@@ -2,6 +2,8 @@
 
 namespace {
 
+const float kMaxCoveringScaleRatio = 1.5f;
+
 bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
                          const pdfview::core::PageIndexRange& rhs) {
   return lhs.start == rhs.start && lhs.end == rhs.end;
@@ -94,11 +96,14 @@ bool EqualPageIndexRange(const pdfview::core::PageIndexRange& lhs,
   }
 
   const pdfview::core::PageCacheSlotState& state = viewModel_.page_cache_states()[pageIndex];
-  if (state.pending && state.render_scale + 0.001f >= renderScale) {
+  const BOOL coveringScale =
+      state.render_scale + 0.001f >= renderScale &&
+      state.render_scale <= renderScale * kMaxCoveringScaleRatio + 0.001f;
+  if (state.pending && coveringScale) {
     return NO;
   }
 
-  if (state.loaded && state.render_scale + 0.001f >= renderScale && [self hasPageImageAtIndex:pageIndex]) {
+  if (state.loaded && coveringScale && [self hasPageImageAtIndex:pageIndex]) {
     return NO;
   }
 

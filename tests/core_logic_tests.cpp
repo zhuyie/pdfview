@@ -136,8 +136,8 @@ bool TestPageRenderPlanOrdering() {
 bool TestHigherScaleCacheCoversLowerScaleTarget() {
   std::vector<pdfview::core::PageCacheSlotState> states =
       pdfview::core::make_page_cache_states(2);
-  pdfview::core::mark_page_cache_rendered(&states, 0, 2.0f);
-  pdfview::core::mark_page_cache_requested(&states, 1, 2.0f);
+  pdfview::core::mark_page_cache_rendered(&states, 0, 1.4f);
+  pdfview::core::mark_page_cache_requested(&states, 1, 1.4f);
 
   pdfview::core::PageIndexRange keep_range;
   keep_range.start = 0;
@@ -147,9 +147,25 @@ bool TestHigherScaleCacheCoversLowerScaleTarget() {
       pdfview::core::plan_page_cache_update(keep_range, states, 1.0f);
 
   return Expect(update.pages_to_render.empty(),
-                "higher-scale loaded or pending pages should satisfy a lower-scale target") &&
+                "slightly higher-scale loaded or pending pages should satisfy a lower-scale target") &&
          Expect(update.pages_to_discard.empty(),
                 "pages inside keep range should not be discarded when covered by higher scale");
+}
+
+bool TestOverlargeScaleTriggersDownsampleRerender() {
+  std::vector<pdfview::core::PageCacheSlotState> states =
+      pdfview::core::make_page_cache_states(1);
+  pdfview::core::mark_page_cache_rendered(&states, 0, 3.0f);
+
+  pdfview::core::PageIndexRange keep_range;
+  keep_range.start = 0;
+  keep_range.end = 1;
+
+  const pdfview::core::PageCacheUpdate update =
+      pdfview::core::plan_page_cache_update(keep_range, states, 1.0f);
+
+  return Expect(update.pages_to_render.size() == 1 && update.pages_to_render[0] == 0,
+                "significantly oversized cached pages should be rerendered at a lower scale");
 }
 
 bool TestDocumentViewModel() {
@@ -311,6 +327,9 @@ int main() {
     return 1;
   }
   if (!TestHigherScaleCacheCoversLowerScaleTarget()) {
+    return 1;
+  }
+  if (!TestOverlargeScaleTriggersDownsampleRerender()) {
     return 1;
   }
   if (!TestDocumentViewModel()) {
