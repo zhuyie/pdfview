@@ -64,6 +64,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                         renderPlan:renderPlan
                                        renderScale:renderScale]) {
     if (pdfview::core::render_profiling_enabled()) {
+      pdfview::core::record_visible_update_skip();
       pdfview::core::render_log("[pdfview] visible_update_skip reason=no_plan_change visible=%d..%d preload=%d..%d keep=%d..%d scale=%.3f",
                                 cachePlan.visible_range.start,
                                 cachePlan.visible_range.end,
@@ -97,6 +98,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     }
     if (![context shouldSubmitRenderForPageIndex:pageIndex renderScale:request.render_scale]) {
       if (pdfview::core::render_profiling_enabled()) {
+        pdfview::core::record_page_submit_skip();
         const pdfview::core::PageCacheSlotState& state =
             context->viewModel_.page_cache_states()[pageIndex];
         const char* reason =
@@ -125,6 +127,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       });
       if (!shouldRender) {
         if (pdfview::core::render_profiling_enabled()) {
+          pdfview::core::record_page_skip();
           pdfview::core::render_log("[pdfview] page_skip page=%d scale=%.3f request=%lld reason=stale_before_render",
                                     requestCopy.page_index,
                                     requestCopy.render_scale,
@@ -162,6 +165,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   if (pdfview::core::render_profiling_enabled()) {
     const double totalMilliseconds = MillisecondsSince(passStart);
+    pdfview::core::record_visible_update_sample(totalMilliseconds,
+                                                imageApplyMilliseconds,
+                                                submittedPageCount,
+                                                discardedPageCount,
+                                                keptPageCount,
+                                                submittedPixelCount);
     pdfview::core::render_log("[pdfview] visible_update total_ms=%.2f image_apply_ms=%.2f submitted=%d "
                               "discarded=%d kept=%d submit_pixels=%lld visible=%d..%d preload=%d..%d keep=%d..%d",
                               totalMilliseconds,
@@ -217,6 +226,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [context markPageRendered:request.page_index renderScale:request.render_scale];
 
   if (pdfview::core::render_profiling_enabled()) {
+    pdfview::core::record_page_render_sample(pdfMilliseconds,
+                                             imageDecodeMilliseconds,
+                                             imageApplyMilliseconds,
+                                             renderResult.bitmap.width * renderResult.bitmap.height);
     pdfview::core::render_log("[pdfview] page_render page=%d scale=%.3f pdf_ms=%.2f decode_ms=%.2f apply_ms=%.2f pixels=%d",
                               request.page_index,
                               request.render_scale,

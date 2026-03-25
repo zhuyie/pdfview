@@ -590,6 +590,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     const pdfview::core::ViewRect visibleRect = context->viewModel_.visible_rect();
     const int currentPage = context->viewModel_.view_state().current_page;
     const double totalMilliseconds = MillisecondsSince(passStart);
+    pdfview::core::record_render_tab_sample(totalMilliseconds, layoutMilliseconds);
     pdfview::core::render_log("[pdfview] render_tab total_ms=%.2f layout_ms=%.2f viewport=%.0fx%.0f "
                               "doc=%.0fx%.0f logical_scale=%.3f render_scale=%.3f current_page=%d scroll_y=%.0f",
                               totalMilliseconds,
@@ -812,6 +813,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
   (void)notification;
+  pdfview::core::flush_render_profile_summary();
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [self cancelInteractiveRendering];
   if (keyMonitor_ != nil) {
