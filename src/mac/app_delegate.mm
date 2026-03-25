@@ -689,6 +689,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [self cancelInteractiveRendering];
   [context setScaleMode:pdfview::core::ScaleMode::FitWidth];
+  [context invalidateRenderedPages];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
 }
@@ -701,6 +702,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [self cancelInteractiveRendering];
   [context setScaleMode:pdfview::core::ScaleMode::FitPage];
+  [context invalidateRenderedPages];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
 }
