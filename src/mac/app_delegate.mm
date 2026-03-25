@@ -16,6 +16,38 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
 }
 
+int FindPageAtViewportTop(const std::vector<pdfview::core::ViewRect>& pageFrames, CGFloat topY) {
+  if (pageFrames.empty()) {
+    return 0;
+  }
+
+  for (int pageIndex = 0; pageIndex < static_cast<int>(pageFrames.size()); ++pageIndex) {
+    const pdfview::core::ViewRect& frame = pageFrames[pageIndex];
+    if (topY >= frame.y && topY < frame.y + frame.height) {
+      return pageIndex;
+    }
+  }
+
+  int nearestPageIndex = 0;
+  CGFloat nearestDistance = 0.0;
+  for (int pageIndex = 0; pageIndex < static_cast<int>(pageFrames.size()); ++pageIndex) {
+    const pdfview::core::ViewRect& frame = pageFrames[pageIndex];
+    CGFloat distance = 0.0;
+    if (topY < frame.y) {
+      distance = frame.y - topY;
+    } else {
+      distance = topY - (frame.y + frame.height);
+    }
+
+    if (pageIndex == 0 || distance < nearestDistance) {
+      nearestPageIndex = pageIndex;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearestPageIndex;
+}
+
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
              std::chrono::steady_clock::now() - start)
@@ -45,6 +77,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)beginInteractiveRenderingForContext:(PDFTabContext*)context;
 - (void)endInteractiveRendering:(NSTimer*)timer;
 - (void)cancelInteractiveRendering;
+- (void)applyScaleChangeForContext:(PDFTabContext*)context
+                        invalidate:(BOOL)invalidateRenderedPages
+                        updateMode:(void (^)(PDFTabContext* context))updateMode;
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
 - (void)zoomOut;
@@ -76,6 +111,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFRenderCoordinator* renderCoordinator_;
   NSTimer* interactiveRenderTimer_;
   PDFTabContext* interactiveRenderContext_;
+  BOOL suppressScrollTracking_;
   id keyMonitor_;
   int argc_;
   const char** argv_;
@@ -91,6 +127,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     interactiveRenderContext_ = nil;
+    suppressScrollTracking_ = NO;
     tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
@@ -600,6 +637,60 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   interactiveRenderContext_ = nil;
 }
 
+- (void)applyScaleChangeForContext:(PDFTabContext*)context
+                        invalidate:(BOOL)invalidateRenderedPages
+                        updateMode:(void (^)(PDFTabContext* context))updateMode {
+  if (context == nil) {
+    return;
+  }
+
+  [self cancelInteractiveRendering];
+  [self updateCurrentPageFromScrollForContext:context];
+
+  const NSRect visibleBounds = [[context->scrollView_ contentView] bounds];
+  const CGFloat viewportHeight = visibleBounds.size.height;
+  const std::vector<pdfview::core::ViewRect>& oldPageFrames = context->viewModel_.page_frames();
+  const int anchorPageIndex = FindPageAtViewportTop(oldPageFrames, visibleBounds.origin.y);
+  pdfview::core::ViewRect oldPageRect;
+  if (anchorPageIndex >= 0 && anchorPageIndex < static_cast<int>(oldPageFrames.size())) {
+    oldPageRect = oldPageFrames[anchorPageIndex];
+  }
+  float anchorRatio = 0.0f;
+  if (oldPageRect.height > 0.0f) {
+    anchorRatio = static_cast<float>((visibleBounds.origin.y - oldPageRect.y) / oldPageRect.height);
+    anchorRatio = std::max(0.0f, std::min(anchorRatio, 1.0f));
+  }
+
+  updateMode(context);
+  if (invalidateRenderedPages) {
+    [context invalidateRenderedPages];
+  }
+
+  suppressScrollTracking_ = YES;
+  [self renderTabContext:context];
+  context->viewModel_.mutable_view_state()->current_page = anchorPageIndex;
+
+  pdfview::core::ViewRect newPageRect;
+  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
+  if (anchorPageIndex >= 0 && anchorPageIndex < static_cast<int>(pageFrames.size())) {
+    newPageRect = pageFrames[anchorPageIndex];
+  }
+  if (newPageRect.height > 0.0f) {
+    NSClipView* clipView = [context->scrollView_ contentView];
+    CGFloat targetOriginY = newPageRect.y + newPageRect.height * anchorRatio;
+    const CGFloat maxOriginY =
+        std::max<CGFloat>(0.0,
+                          context->viewModel_.layout_result().document_height - viewportHeight);
+    targetOriginY = std::max<CGFloat>(0.0, std::min(targetOriginY, maxOriginY));
+    [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
+    [context->scrollView_ reflectScrolledClipView:clipView];
+    [context setScrollOrigin:[clipView bounds].origin];
+    [context updateCurrentPageFromScroll];
+    [self updateVisiblePagesForContext:context];
+  }
+  suppressScrollTracking_ = NO;
+}
+
 - (void)renderTabContext:(PDFTabContext*)context {
   if (context == nil || !context->viewModel_.document()) {
     return;
@@ -663,9 +754,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
-  [context setManualScale:std::min([self currentScaleForContext:context] * 1.25f, 5.0f)];
-  [self renderTabContext:context];
+  [self applyScaleChangeForContext:context
+                        invalidate:NO
+                        updateMode:^(PDFTabContext* scaleContext) {
+                          [scaleContext setManualScale:std::min([self currentScaleForContext:scaleContext] * 1.25f, 5.0f)];
+                        }];
   [self updateToolbarForActiveTab];
 }
 
@@ -675,9 +768,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
-  [context setManualScale:std::max([self currentScaleForContext:context] / 1.25f, 0.1f)];
-  [self renderTabContext:context];
+  [self applyScaleChangeForContext:context
+                        invalidate:NO
+                        updateMode:^(PDFTabContext* scaleContext) {
+                          [scaleContext setManualScale:std::max([self currentScaleForContext:scaleContext] / 1.25f, 0.1f)];
+                        }];
   [self updateToolbarForActiveTab];
 }
 
@@ -687,10 +782,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
-  [context setScaleMode:pdfview::core::ScaleMode::FitWidth];
-  [context invalidateRenderedPages];
-  [self renderTabContext:context];
+  [self applyScaleChangeForContext:context
+                        invalidate:YES
+                        updateMode:^(PDFTabContext* scaleContext) {
+                          [scaleContext setScaleMode:pdfview::core::ScaleMode::FitWidth];
+                        }];
   [self updateToolbarForActiveTab];
 }
 
@@ -700,10 +796,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
-  [context setScaleMode:pdfview::core::ScaleMode::FitPage];
-  [context invalidateRenderedPages];
-  [self renderTabContext:context];
+  [self applyScaleChangeForContext:context
+                        invalidate:YES
+                        updateMode:^(PDFTabContext* scaleContext) {
+                          [scaleContext setScaleMode:pdfview::core::ScaleMode::FitPage];
+                        }];
   [self updateToolbarForActiveTab];
 }
 
@@ -755,6 +852,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
+  if (suppressScrollTracking_) {
+    return;
+  }
   PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
   [self updateCurrentPageFromScrollForContext:context];
   [self beginInteractiveRenderingForContext:context];
