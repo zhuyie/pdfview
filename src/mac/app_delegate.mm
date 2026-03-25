@@ -198,8 +198,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSView* tabStripRightFadeView_;
   NSView* contentHostView_;
   NSView* startupView_;
+  NSView* startupOpenPanelView_;
   NSView* startupRecentListView_;
   NSButton* startupClearButton_;
+  NSButton* startupSelectFileButton_;
   NSButton* tabScrollLeftButton_;
   NSButton* tabScrollRightButton_;
   NSView* toolbarStrip_;
@@ -920,6 +922,60 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [startupClearButton_ setAction:@selector(clearRecentDocuments:)];
   [startupView_ addSubview:startupClearButton_];
 
+  startupOpenPanelView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 132)];
+  [startupOpenPanelView_ setWantsLayer:YES];
+  [[startupOpenPanelView_ layer] setCornerRadius:16.0f];
+  [[startupOpenPanelView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:1.0 alpha:0.9] CGColor]];
+  [[startupOpenPanelView_ layer] setBorderWidth:1.0f];
+  [[startupOpenPanelView_ layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.86 alpha:1.0] CGColor]];
+  [startupView_ addSubview:startupOpenPanelView_];
+
+  NSTextField* openTitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
+  [openTitleLabel setEditable:NO];
+  [openTitleLabel setBezeled:NO];
+  [openTitleLabel setBordered:NO];
+  [openTitleLabel setDrawsBackground:NO];
+  [openTitleLabel setSelectable:NO];
+  [openTitleLabel setStringValue:@"Open new document"];
+  [openTitleLabel setFont:[NSFont systemFontOfSize:20.0 weight:NSFontWeightSemibold]];
+  [openTitleLabel setTextColor:[NSColor colorWithCalibratedWhite:0.16 alpha:1.0]];
+  [openTitleLabel setTag:1002];
+  [startupView_ addSubview:openTitleLabel];
+
+  startupSelectFileButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(24, 48, 108, 30)];
+  [startupSelectFileButton_ setTitle:@"Select File"];
+  [startupSelectFileButton_ setBezelStyle:NSBezelStyleRounded];
+  [startupSelectFileButton_ setTarget:self];
+  [startupSelectFileButton_ setAction:@selector(openDocument:)];
+  [startupOpenPanelView_ addSubview:startupSelectFileButton_];
+
+  NSTextField* openHintLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(24, 84, 220, 16)];
+  [openHintLabel setEditable:NO];
+  [openHintLabel setBezeled:NO];
+  [openHintLabel setBordered:NO];
+  [openHintLabel setDrawsBackground:NO];
+  [openHintLabel setSelectable:NO];
+  [openHintLabel setStringValue:@"Choose a PDF from disk, or drag one here."];
+  [openHintLabel setFont:[NSFont systemFontOfSize:12.0]];
+  [openHintLabel setTextColor:[NSColor colorWithCalibratedWhite:0.46 alpha:1.0]];
+  [openHintLabel setTag:1003];
+  [startupOpenPanelView_ addSubview:openHintLabel];
+
+  NSImageView* openIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(442, 18, 92, 92)];
+  if ([NSImage respondsToSelector:@selector(imageWithSystemSymbolName:accessibilityDescription:)]) {
+    NSImage* icon = [NSImage imageWithSystemSymbolName:@"doc.text.image"
+                               accessibilityDescription:@"Document"];
+    if (icon != nil && [NSImageSymbolConfiguration class] != Nil) {
+      icon = [icon imageWithSymbolConfiguration:
+                  [NSImageSymbolConfiguration configurationWithPointSize:56.0
+                                                                  weight:NSFontWeightLight]];
+    }
+    [openIconView setImage:icon];
+    [openIconView setContentTintColor:[NSColor colorWithCalibratedWhite:0.65 alpha:1.0]];
+  }
+  [openIconView setImageScaling:NSImageScaleProportionallyUpOrDown];
+  [startupOpenPanelView_ addSubview:openIconView];
+
   startupRecentListView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 300)];
   [startupRecentListView_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxXMargin |
                                            NSViewMinYMargin | NSViewMaxYMargin];
@@ -1030,13 +1086,17 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)layoutStartupView {
-  if (startupView_ == nil || startupRecentListView_ == nil || startupClearButton_ == nil) {
+  if (startupView_ == nil || startupOpenPanelView_ == nil ||
+      startupRecentListView_ == nil || startupClearButton_ == nil) {
     return;
   }
 
   const NSRect bounds = [startupView_ bounds];
   NSTextField* titleLabel = (NSTextField*)[startupView_ viewWithTag:1001];
+  NSTextField* openTitleLabel = (NSTextField*)[startupView_ viewWithTag:1002];
   const CGFloat contentWidth = 560.0f;
+  const CGFloat openPanelHeight = 132.0f;
+  const CGFloat openHeaderHeight = 28.0f;
   const CGFloat rowHeight = 44.0f;
   const CGFloat rowGap = 10.0f;
   const CGFloat listTopInset = 18.0f;
@@ -1049,14 +1109,30 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                 visibleRowCount * rowHeight +
                 std::max<CGFloat>(0.0f, static_cast<CGFloat>(visibleRowCount - 1)) * rowGap;
   const CGFloat headerHeight = 32.0f;
-  const CGFloat spacing = 8.0f;
-  const CGFloat totalHeight = headerHeight + spacing + listHeight;
+  const CGFloat openHeaderSpacing = 8.0f;
+  const CGFloat sectionSpacing = 26.0f;
+  const CGFloat headerSpacing = 8.0f;
+  const CGFloat totalHeight =
+      openHeaderHeight + openHeaderSpacing + openPanelHeight +
+      sectionSpacing + headerHeight + headerSpacing + listHeight;
   const CGFloat originX = std::floor((NSWidth(bounds) - contentWidth) * 0.5f);
   const CGFloat originY = std::floor((NSHeight(bounds) - totalHeight) * 0.5f);
 
-  [titleLabel setFrame:NSMakeRect(originX, originY + listHeight + spacing + 2.0f, 200.0f, 28.0f)];
+  [openTitleLabel setFrame:NSMakeRect(originX,
+                                      originY + listHeight + headerHeight + headerSpacing +
+                                          sectionSpacing + openPanelHeight + openHeaderSpacing + 2.0f,
+                                      260.0f,
+                                      24.0f)];
+  [startupOpenPanelView_ setFrame:NSMakeRect(originX,
+                                             originY + listHeight + headerHeight + headerSpacing + sectionSpacing,
+                                             contentWidth,
+                                             openPanelHeight)];
+  [titleLabel setFrame:NSMakeRect(originX,
+                                  originY + listHeight + headerSpacing + 2.0f,
+                                  200.0f,
+                                  28.0f)];
   [startupClearButton_ setFrame:NSMakeRect(originX + contentWidth - 116.0f,
-                                           originY + listHeight + spacing,
+                                           originY + listHeight + headerSpacing,
                                            116.0f,
                                            28.0f)];
   [startupRecentListView_ setFrame:NSMakeRect(originX, originY, contentWidth, listHeight)];
