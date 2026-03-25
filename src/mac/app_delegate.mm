@@ -7,6 +7,7 @@
 
 #include "core/profiling.h"
 #include "core/document.h"
+#include "core/document_paths.h"
 #include "core/recent_documents.h"
 #include "mac/render_coordinator.h"
 #include "mac/tab_context.h"
@@ -77,6 +78,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
 - (PDFTabContext*)activeTabContext;
+- (PDFTabContext*)contextForDocumentPath:(const std::string&)path;
 - (void)selectTabContext:(PDFTabContext*)context;
 - (void)closeTabContext:(PDFTabContext*)context;
 - (IBAction)selectTabFromStrip:(id)sender;
@@ -669,6 +671,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive {
+  PDFTabContext* existingContext = [self contextForDocumentPath:path];
+  if (existingContext != nil) {
+    [self selectTabContext:existingContext];
+    return;
+  }
+
   const pdfview::core::OpenDocumentResult result = pdfview::core::open_document(path);
   if (!result.ok()) {
     [self presentError:[NSString stringWithFormat:@"Failed to open PDF: %s", result.error.c_str()]];
@@ -754,6 +762,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (PDFTabContext*)activeTabContext {
   return selectedTabContext_;
+}
+
+- (PDFTabContext*)contextForDocumentPath:(const std::string&)path {
+  for (PDFTabContext* context in tabContexts_) {
+    if (pdfview::core::same_document_path(context->documentPath_, path)) {
+      return context;
+    }
+  }
+
+  return nil;
 }
 
 - (void)selectTabContext:(PDFTabContext*)context {

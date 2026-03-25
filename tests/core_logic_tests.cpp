@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core/document_view_model.h"
+#include "core/document_paths.h"
 #include "core/page_cache.h"
 #include "core/recent_documents.h"
 #include "core/viewport.h"
@@ -257,6 +258,12 @@ bool TestRecentDocumentEscapeRoundTrip() {
          Expect(loaded[1] == "/tmp/line\nbreak.pdf", "recent document loader should preserve escaped newlines");
 }
 
+bool TestSameDocumentPath() {
+  return Expect(pdfview::core::same_document_path("tests/fixtures/smoke.pdf",
+                                                  "tests/fixtures/../fixtures/smoke.pdf"),
+                "document path comparison should normalize equivalent paths");
+}
+
 bool TestDocumentViewModel() {
   std::vector<pdfview::core::PageSize> page_sizes(3);
   page_sizes[0].width = 400.0f;
@@ -465,6 +472,9 @@ int main() {
     return 1;
   }
   if (!TestRecentDocumentEscapeRoundTrip()) {
+    return 1;
+  }
+  if (!TestSameDocumentPath()) {
     return 1;
   }
   if (!TestDocumentViewModel()) {

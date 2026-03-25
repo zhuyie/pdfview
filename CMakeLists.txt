@@ -20,6 +20,7 @@ endif()
 
 add_library(pdfview_core
     src/core/document.cpp
+    src/core/document_paths.cpp
     src/core/document_view_model.cpp
     src/core/page_cache.cpp
     src/core/profiling.cpp
