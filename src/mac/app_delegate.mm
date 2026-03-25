@@ -26,6 +26,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 @interface AppDelegate () <NSWindowDelegate, NSTabViewDelegate, NSComboBoxDelegate, NSTextFieldDelegate, PDFRenderCoordinatorDelegate>
 - (void)installMainMenu;
+- (void)rebuildOpenRecentMenu;
 - (void)installApplicationIcon;
 - (void)installToolbarStripInView:(NSView*)contentView;
 - (void)layoutChrome;
@@ -61,6 +62,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (PDFTabContext*)activeTabContext;
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
 - (IBAction)openDocument:(id)sender;
+- (IBAction)openRecentDocument:(id)sender;
+- (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
 @end
@@ -74,6 +77,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSButton* zoomInButton_;
   NSButton* fitWidthButton_;
   NSButton* fitPageButton_;
+  NSMenu* openRecentMenu_;
   BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
   PDFRenderCoordinator* renderCoordinator_;
@@ -92,6 +96,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     argv_ = argv;
     keyMonitor_ = nil;
     zoomComboBoxEditing_ = NO;
+    openRecentMenu_ = nil;
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     interactiveRenderContext_ = nil;
@@ -158,6 +163,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [openItem setTarget:self];
   [fileMenu addItem:openItem];
 
+  NSMenuItem* openRecentItem =
+      [[NSMenuItem alloc] initWithTitle:@"Open Recent" action:nil keyEquivalent:@""];
+  openRecentMenu_ = [[NSMenu alloc] initWithTitle:@"Open Recent"];
+  [openRecentItem setSubmenu:openRecentMenu_];
+  [fileMenu addItem:openRecentItem];
+  [self rebuildOpenRecentMenu];
+
   NSMenuItem* closeTabItem = [[NSMenuItem alloc] initWithTitle:@"Close Tab"
                                                         action:@selector(closeCurrentTab:)
                                                  keyEquivalent:@"w"];
@@ -197,6 +209,42 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [NSApp setHelpMenu:helpMenu];
 
   [NSApp setMainMenu:mainMenu];
+}
+
+- (void)rebuildOpenRecentMenu {
+  if (openRecentMenu_ == nil) {
+    return;
+  }
+
+  [openRecentMenu_ removeAllItems];
+
+  NSArray<NSURL*>* recentURLs = [[NSDocumentController sharedDocumentController] recentDocumentURLs];
+  if ([recentURLs count] == 0) {
+    NSMenuItem* emptyItem =
+        [[NSMenuItem alloc] initWithTitle:@"No Recent Documents" action:nil keyEquivalent:@""];
+    [emptyItem setEnabled:NO];
+    [openRecentMenu_ addItem:emptyItem];
+    return;
+  }
+
+  for (NSURL* url in recentURLs) {
+    NSMenuItem* item =
+        [[NSMenuItem alloc] initWithTitle:[url lastPathComponent]
+                                   action:@selector(openRecentDocument:)
+                            keyEquivalent:@""];
+    [item setTarget:self];
+    [item setRepresentedObject:url];
+    [item setToolTip:[url path]];
+    [openRecentMenu_ addItem:item];
+  }
+
+  [openRecentMenu_ addItem:[NSMenuItem separatorItem]];
+  NSMenuItem* clearItem =
+      [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
+                                 action:@selector(clearRecentDocuments:)
+                          keyEquivalent:@""];
+  [clearItem setTarget:self];
+  [openRecentMenu_ addItem:clearItem];
 }
 
 - (void)installApplicationIcon {
@@ -427,6 +475,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       [[PDFTabContext alloc] initWithDocument:result.document
                                          path:path
                                         frame:NSMakeRect(0, 0, 100, 100)];
+  NSURL* recentURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
+  if (recentURL != nil) {
+    [[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:recentURL];
+    [self rebuildOpenRecentMenu];
+  }
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
@@ -466,6 +519,25 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   for (NSURL* url in [panel URLs]) {
     [self openDocumentAtPath:[[url path] UTF8String] makeActive:YES];
   }
+}
+
+- (IBAction)openRecentDocument:(id)sender {
+  if (![sender isKindOfClass:[NSMenuItem class]]) {
+    return;
+  }
+
+  NSURL* url = [(NSMenuItem*)sender representedObject];
+  if (url == nil || ![url isFileURL]) {
+    return;
+  }
+
+  [self openDocumentAtPath:[[url path] UTF8String] makeActive:YES];
+}
+
+- (IBAction)clearRecentDocuments:(id)sender {
+  (void)sender;
+  [[NSDocumentController sharedDocumentController] clearRecentDocuments:nil];
+  [self rebuildOpenRecentMenu];
 }
 
 - (IBAction)closeCurrentTab:(id)sender {
