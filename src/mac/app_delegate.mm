@@ -24,7 +24,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, NSTabViewDelegate, NSComboBoxDelegate, NSTextFieldDelegate, PDFRenderCoordinatorDelegate>
+@interface AppDelegate () <NSWindowDelegate, NSTabViewDelegate, NSComboBoxDelegate, NSTextFieldDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation>
 - (void)installMainMenu;
 - (void)rebuildOpenRecentMenu;
 - (void)installApplicationIcon;
@@ -52,6 +52,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (float)currentScaleForContext:(PDFTabContext*)context;
 - (void)zoomIn;
 - (void)zoomOut;
+- (void)zoomToActualSize;
 - (void)resetZoomToFitWidth;
 - (void)fitZoomToPage;
 - (void)goToNextPage;
@@ -108,6 +109,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
   (void)notification;
+
+  if ([NSWindow respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)]) {
+    [NSWindow setAllowsAutomaticWindowTabbing:NO];
+  }
 
   NSRect frame = NSMakeRect(0, 0, 1080, 800);
   window_ = [[NSWindow alloc] initWithContentRect:frame
@@ -176,6 +181,48 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [closeTabItem setTarget:self];
   [fileMenu addItem:closeTabItem];
   [fileMenuItem setSubmenu:fileMenu];
+
+  NSMenuItem* viewMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:viewMenuItem];
+  NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+  NSMenuItem* zoomMenuItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
+  NSMenu* zoomMenu = [[NSMenu alloc] initWithTitle:@"Zoom"];
+
+  NSMenuItem* zoomInItem = [[NSMenuItem alloc] initWithTitle:@"Zoom In"
+                                                      action:@selector(zoomIn)
+                                               keyEquivalent:@"+"];
+  [zoomInItem setTarget:self];
+  [zoomMenu addItem:zoomInItem];
+
+  NSMenuItem* zoomOutItem = [[NSMenuItem alloc] initWithTitle:@"Zoom Out"
+                                                       action:@selector(zoomOut)
+                                                keyEquivalent:@"-"];
+  [zoomOutItem setTarget:self];
+  [zoomMenu addItem:zoomOutItem];
+
+  [zoomMenu addItem:[NSMenuItem separatorItem]];
+
+  NSMenuItem* actualSizeItem = [[NSMenuItem alloc] initWithTitle:@"Zoom to 100%"
+                                                          action:@selector(zoomToActualSize)
+                                                   keyEquivalent:@"1"];
+  [actualSizeItem setTarget:self];
+  [zoomMenu addItem:actualSizeItem];
+
+  NSMenuItem* fitPageItem = [[NSMenuItem alloc] initWithTitle:@"Zoom to Fit Page"
+                                                       action:@selector(fitZoomToPage)
+                                                keyEquivalent:@""];
+  [fitPageItem setTarget:self];
+  [zoomMenu addItem:fitPageItem];
+
+  NSMenuItem* fitWidthItem = [[NSMenuItem alloc] initWithTitle:@"Zoom to Fit Width"
+                                                        action:@selector(resetZoomToFitWidth)
+                                                 keyEquivalent:@""];
+  [fitWidthItem setTarget:self];
+  [zoomMenu addItem:fitWidthItem];
+
+  [zoomMenuItem setSubmenu:zoomMenu];
+  [viewMenu addItem:zoomMenuItem];
+  [viewMenuItem setSubmenu:viewMenu];
 
   NSMenuItem* windowMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
   [mainMenu addItem:windowMenuItem];
@@ -799,6 +846,20 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self updateToolbarForActiveTab];
 }
 
+- (void)zoomToActualSize {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
+    return;
+  }
+
+  [self applyScaleChangeForContext:context
+                        invalidate:NO
+                        updateMode:^(PDFTabContext* scaleContext) {
+                          [scaleContext setManualScale:1.0f];
+                        }];
+  [self updateToolbarForActiveTab];
+}
+
 - (void)resetZoomToFitWidth {
   PDFTabContext* context = [self activeTabContext];
   if (context == nil) {
@@ -991,6 +1052,32 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
   (void)sender;
+  return YES;
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
+  SEL action = [menuItem action];
+  const BOOL hasActiveDocument = [self activeTabContext] != nil;
+
+  if (action == @selector(zoomIn) ||
+      action == @selector(zoomOut) ||
+      action == @selector(zoomToActualSize) ||
+      action == @selector(resetZoomToFitWidth) ||
+      action == @selector(fitZoomToPage) ||
+      action == @selector(goToNextPage) ||
+      action == @selector(goToPreviousPage) ||
+      action == @selector(closeCurrentTab:)) {
+    return hasActiveDocument;
+  }
+
+  if (action == @selector(openRecentDocument:)) {
+    return menuItem.representedObject != nil;
+  }
+
+  if (action == @selector(clearRecentDocuments:)) {
+    return [[[NSDocumentController sharedDocumentController] recentDocumentURLs] count] > 0;
+  }
+
   return YES;
 }
 
