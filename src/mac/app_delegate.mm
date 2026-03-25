@@ -542,7 +542,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [tabView_ selectTabViewItem:item];
     [self layoutChrome];
     [self renderTabContext:context];
-    [self scrollToCurrentPageInContext:context];
   } else {
     [self layoutChrome];
     [self renderTabContext:context];
