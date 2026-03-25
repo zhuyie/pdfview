@@ -7,6 +7,7 @@
 
 #include "core/profiling.h"
 #include "core/document.h"
+#include "core/recent_documents.h"
 #include "mac/render_coordinator.h"
 #include "mac/tab_context.h"
 
@@ -99,6 +100,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSButton* fitWidthButton_;
   NSButton* fitPageButton_;
   NSMenu* openRecentMenu_;
+  std::vector<std::string> recentDocumentPaths_;
   BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
   PDFTabContext* selectedTabContext_;
@@ -120,6 +122,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     zoomComboBoxEditing_ = NO;
     openRecentMenu_ = nil;
     selectedTabContext_ = nil;
+    recentDocumentPaths_ = pdfview::core::load_recent_documents();
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     interactiveRenderContext_ = nil;
@@ -283,8 +286,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [openRecentMenu_ removeAllItems];
 
-  NSArray<NSURL*>* recentURLs = [[NSDocumentController sharedDocumentController] recentDocumentURLs];
-  if ([recentURLs count] == 0) {
+  if (recentDocumentPaths_.empty()) {
     NSMenuItem* emptyItem =
         [[NSMenuItem alloc] initWithTitle:@"No Recent Documents" action:nil keyEquivalent:@""];
     [emptyItem setEnabled:NO];
@@ -292,14 +294,18 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  for (NSURL* url in recentURLs) {
+  for (size_t index = 0; index < recentDocumentPaths_.size(); ++index) {
+    NSString* path = [NSString stringWithUTF8String:recentDocumentPaths_[index].c_str()];
+    if (path == nil || [path length] == 0) {
+      continue;
+    }
     NSMenuItem* item =
-        [[NSMenuItem alloc] initWithTitle:[url lastPathComponent]
+        [[NSMenuItem alloc] initWithTitle:[path lastPathComponent]
                                    action:@selector(openRecentDocument:)
                             keyEquivalent:@""];
     [item setTarget:self];
-    [item setRepresentedObject:url];
-    [item setToolTip:[url path]];
+    [item setRepresentedObject:path];
+    [item setToolTip:path];
     [openRecentMenu_ addItem:item];
   }
 
@@ -673,11 +679,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       [[PDFTabContext alloc] initWithDocument:result.document
                                          path:path
                                         frame:NSMakeRect(0, 0, 100, 100)];
-  NSURL* recentURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
-  if (recentURL != nil) {
-    [[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:recentURL];
-    [self rebuildOpenRecentMenu];
-  }
+  recentDocumentPaths_ = pdfview::core::note_recent_document(recentDocumentPaths_, path);
+  pdfview::core::save_recent_documents(recentDocumentPaths_);
+  [self rebuildOpenRecentMenu];
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
@@ -719,17 +723,18 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  NSURL* url = [(NSMenuItem*)sender representedObject];
-  if (url == nil || ![url isFileURL]) {
+  NSString* path = [(NSMenuItem*)sender representedObject];
+  if (path == nil || [path length] == 0) {
     return;
   }
 
-  [self openDocumentAtPath:[[url path] UTF8String] makeActive:YES];
+  [self openDocumentAtPath:[path UTF8String] makeActive:YES];
 }
 
 - (IBAction)clearRecentDocuments:(id)sender {
   (void)sender;
-  [[NSDocumentController sharedDocumentController] clearRecentDocuments:nil];
+  recentDocumentPaths_.clear();
+  pdfview::core::save_recent_documents(recentDocumentPaths_);
   [self rebuildOpenRecentMenu];
 }
 
@@ -1286,7 +1291,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   if (action == @selector(clearRecentDocuments:)) {
-    return [[[NSDocumentController sharedDocumentController] recentDocumentURLs] count] > 0;
+    return !recentDocumentPaths_.empty();
   }
 
   return YES;

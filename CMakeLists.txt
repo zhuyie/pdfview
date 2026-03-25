@@ -24,6 +24,7 @@ add_library(pdfview_core
     src/core/page_cache.cpp
     src/core/profiling.cpp
     src/core/pdfium_document.cpp
+    src/core/recent_documents.cpp
     src/core/viewport.cpp
 )
 

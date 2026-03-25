@@ -6,6 +6,7 @@
 
 #include "core/document_view_model.h"
 #include "core/page_cache.h"
+#include "core/recent_documents.h"
 #include "core/viewport.h"
 
 namespace {
@@ -221,6 +222,41 @@ bool TestRenderPlanFingerprint() {
          Expect(rejects_other_keep, "fingerprints should include keep range");
 }
 
+bool TestRecentDocumentDeduplication() {
+  std::vector<std::string> current_paths;
+  current_paths.push_back("/tmp/a.pdf");
+  current_paths.push_back("/tmp/b.pdf");
+  current_paths.push_back("/tmp/c.pdf");
+
+  const std::vector<std::string> updated_paths =
+      pdfview::core::note_recent_document(current_paths, "/tmp/b.pdf", 3);
+
+  return Expect(updated_paths.size() == 3, "recent document list should keep its max size") &&
+         Expect(updated_paths[0] == "/tmp/b.pdf", "reopened document should move to the front") &&
+         Expect(updated_paths[1] == "/tmp/a.pdf", "older documents should keep order after deduplication") &&
+         Expect(updated_paths[2] == "/tmp/c.pdf", "non-reopened documents should remain after deduplication");
+}
+
+bool TestRecentDocumentEscapeRoundTrip() {
+#if defined(_WIN32)
+  _putenv_s("PDFVIEW_CONFIG_DIR", "C:\\temp\\pdfview_test_recent");
+#else
+  setenv("PDFVIEW_CONFIG_DIR", "/tmp/pdfview_test_recent", 1);
+#endif
+
+  std::vector<std::string> document_paths;
+  document_paths.push_back("/tmp/normal.pdf");
+  document_paths.push_back("/tmp/line\nbreak.pdf");
+
+  const bool saved = pdfview::core::save_recent_documents(document_paths);
+  const std::vector<std::string> loaded = pdfview::core::load_recent_documents();
+
+  return Expect(saved, "recent document list should save successfully") &&
+         Expect(loaded.size() >= 2, "saved recent documents should load back") &&
+         Expect(loaded[0] == "/tmp/normal.pdf", "recent document loader should preserve normal paths") &&
+         Expect(loaded[1] == "/tmp/line\nbreak.pdf", "recent document loader should preserve escaped newlines");
+}
+
 bool TestDocumentViewModel() {
   std::vector<pdfview::core::PageSize> page_sizes(3);
   page_sizes[0].width = 400.0f;
@@ -423,6 +459,12 @@ int main() {
     return 1;
   }
   if (!TestRenderPlanFingerprint()) {
+    return 1;
+  }
+  if (!TestRecentDocumentDeduplication()) {
+    return 1;
+  }
+  if (!TestRecentDocumentEscapeRoundTrip()) {
     return 1;
   }
   if (!TestDocumentViewModel()) {
