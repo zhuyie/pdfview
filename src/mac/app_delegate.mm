@@ -182,9 +182,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)openRecentDocument:(id)sender;
+- (IBAction)openStartupRecentDocument:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
+- (void)installStartupViewInHost:(NSView*)hostView;
+- (void)rebuildStartupView;
+- (void)layoutStartupView;
 @end
 
 @implementation AppDelegate {
@@ -193,6 +197,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSView* tabStripContentView_;
   NSView* tabStripRightFadeView_;
   NSView* contentHostView_;
+  NSView* startupView_;
+  NSView* startupRecentListView_;
+  NSButton* startupClearButton_;
   NSButton* tabScrollLeftButton_;
   NSButton* tabScrollRightButton_;
   NSView* toolbarStrip_;
@@ -821,6 +828,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [contentHostView_ setWantsLayer:YES];
   [[contentHostView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
   [contentView addSubview:contentHostView_ positioned:NSWindowBelow relativeTo:tabBarView_];
+  [self installStartupViewInHost:contentHostView_];
 }
 
 - (void)installToolbarStripInView:(NSView*)contentView {
@@ -885,6 +893,175 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [toolbarStrip_ addSubview:fitPageButton_];
 }
 
+- (void)installStartupViewInHost:(NSView*)hostView {
+  startupView_ = [[NSView alloc] initWithFrame:[hostView bounds]];
+  [startupView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [startupView_ setWantsLayer:YES];
+  [[startupView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.96 alpha:1.0] CGColor]];
+  [hostView addSubview:startupView_];
+
+  NSTextField* titleLabel =
+      [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 28)];
+  [titleLabel setEditable:NO];
+  [titleLabel setBezeled:NO];
+  [titleLabel setBordered:NO];
+  [titleLabel setDrawsBackground:NO];
+  [titleLabel setSelectable:NO];
+  [titleLabel setStringValue:@"Recents"];
+  [titleLabel setFont:[NSFont systemFontOfSize:22.0 weight:NSFontWeightSemibold]];
+  [titleLabel setTextColor:[NSColor colorWithCalibratedWhite:0.16 alpha:1.0]];
+  [titleLabel setTag:1001];
+  [startupView_ addSubview:titleLabel];
+
+  startupClearButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 116, 28)];
+  [startupClearButton_ setTitle:@"Clear Recents"];
+  [startupClearButton_ setBezelStyle:NSBezelStyleRounded];
+  [startupClearButton_ setTarget:self];
+  [startupClearButton_ setAction:@selector(clearRecentDocuments:)];
+  [startupView_ addSubview:startupClearButton_];
+
+  startupRecentListView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 300)];
+  [startupRecentListView_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxXMargin |
+                                           NSViewMinYMargin | NSViewMaxYMargin];
+  [startupRecentListView_ setWantsLayer:YES];
+  [[startupRecentListView_ layer] setCornerRadius:14.0f];
+  [[startupRecentListView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:1.0 alpha:0.9] CGColor]];
+  [[startupRecentListView_ layer] setBorderWidth:1.0f];
+  [[startupRecentListView_ layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.86 alpha:1.0] CGColor]];
+  [startupView_ addSubview:startupRecentListView_];
+
+  [self layoutStartupView];
+  [self rebuildStartupView];
+}
+
+- (void)rebuildStartupView {
+  if (startupRecentListView_ == nil) {
+    return;
+  }
+
+  [self layoutStartupView];
+  [startupClearButton_ setEnabled:!recentDocumentPaths_.empty()];
+
+  NSArray<NSView*>* subviews = [[startupRecentListView_ subviews] copy];
+  for (NSView* subview in subviews) {
+    [subview removeFromSuperview];
+  }
+
+  if (recentDocumentPaths_.empty()) {
+    NSTextField* emptyLabel =
+        [[NSTextField alloc] initWithFrame:NSMakeRect(24, 26, 360, 22)];
+    [emptyLabel setEditable:NO];
+    [emptyLabel setBezeled:NO];
+    [emptyLabel setBordered:NO];
+    [emptyLabel setDrawsBackground:NO];
+    [emptyLabel setSelectable:NO];
+    [emptyLabel setStringValue:@"No recent documents yet."];
+    [emptyLabel setFont:[NSFont systemFontOfSize:14.0]];
+    [emptyLabel setTextColor:[NSColor colorWithCalibratedWhite:0.46 alpha:1.0]];
+    [startupRecentListView_ addSubview:emptyLabel];
+    return;
+  }
+
+  const CGFloat rowHeight = 44.0f;
+  const CGFloat rowGap = 10.0f;
+  const CGFloat leftInset = 18.0f;
+  const CGFloat topInset = 18.0f;
+  const CGFloat maxWidth = NSWidth([startupRecentListView_ bounds]) - leftInset * 2.0f;
+
+  for (size_t index = 0; index < recentDocumentPaths_.size(); ++index) {
+    NSString* path = [NSString stringWithUTF8String:recentDocumentPaths_[index].c_str()];
+    if (path == nil || [path length] == 0) {
+      continue;
+    }
+
+    const CGFloat y = NSHeight([startupRecentListView_ bounds]) - topInset - rowHeight - index * (rowHeight + rowGap);
+    if (y < 16.0f) {
+      break;
+    }
+
+    NSButton* rowButton =
+        [[NSButton alloc] initWithFrame:NSMakeRect(leftInset, y, maxWidth, rowHeight)];
+    [rowButton setBezelStyle:NSBezelStyleRegularSquare];
+    [rowButton setBordered:NO];
+    [rowButton setButtonType:NSButtonTypeMomentaryPushIn];
+    [rowButton setTarget:self];
+    [rowButton setAction:@selector(openStartupRecentDocument:)];
+    [rowButton setTag:static_cast<NSInteger>(index)];
+    [rowButton setTitle:@""];
+    [rowButton setToolTip:path];
+    [rowButton setWantsLayer:YES];
+    [[rowButton layer] setCornerRadius:10.0f];
+    [[rowButton layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.97 alpha:1.0] CGColor]];
+    [[rowButton layer] setBorderWidth:1.0f];
+    [[rowButton layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.90 alpha:1.0] CGColor]];
+    [startupRecentListView_ addSubview:rowButton];
+
+    NSTextField* nameLabel =
+        [[NSTextField alloc] initWithFrame:NSMakeRect(14.0f, 20.0f, maxWidth - 28.0f, 18.0f)];
+    [nameLabel setEditable:NO];
+    [nameLabel setBezeled:NO];
+    [nameLabel setBordered:NO];
+    [nameLabel setDrawsBackground:NO];
+    [nameLabel setSelectable:NO];
+    [nameLabel setStringValue:[path lastPathComponent]];
+    [nameLabel setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightMedium]];
+    [nameLabel setTextColor:[NSColor colorWithCalibratedWhite:0.16 alpha:1.0]];
+    [nameLabel setUsesSingleLineMode:YES];
+    [[nameLabel cell] setWraps:NO];
+    [[nameLabel cell] setLineBreakMode:NSLineBreakByTruncatingTail];
+    [rowButton addSubview:nameLabel];
+
+    NSTextField* pathLabel =
+        [[NSTextField alloc] initWithFrame:NSMakeRect(14.0f, 6.0f, maxWidth - 28.0f, 14.0f)];
+    [pathLabel setEditable:NO];
+    [pathLabel setBezeled:NO];
+    [pathLabel setBordered:NO];
+    [pathLabel setDrawsBackground:NO];
+    [pathLabel setSelectable:NO];
+    NSString* directoryPath = [path stringByDeletingLastPathComponent];
+    [pathLabel setStringValue:directoryPath];
+    [pathLabel setFont:[NSFont systemFontOfSize:11.0]];
+    [pathLabel setTextColor:[NSColor colorWithCalibratedWhite:0.47 alpha:1.0]];
+    [pathLabel setUsesSingleLineMode:YES];
+    [[pathLabel cell] setWraps:NO];
+    [[pathLabel cell] setLineBreakMode:NSLineBreakByTruncatingMiddle];
+    [rowButton addSubview:pathLabel];
+  }
+}
+
+- (void)layoutStartupView {
+  if (startupView_ == nil || startupRecentListView_ == nil || startupClearButton_ == nil) {
+    return;
+  }
+
+  const NSRect bounds = [startupView_ bounds];
+  NSTextField* titleLabel = (NSTextField*)[startupView_ viewWithTag:1001];
+  const CGFloat contentWidth = 560.0f;
+  const CGFloat rowHeight = 44.0f;
+  const CGFloat rowGap = 10.0f;
+  const CGFloat listTopInset = 18.0f;
+  const CGFloat listBottomInset = 18.0f;
+  const size_t visibleRowCount = std::min<size_t>(recentDocumentPaths_.empty() ? 1 : recentDocumentPaths_.size(), 5);
+  const CGFloat listHeight =
+      recentDocumentPaths_.empty()
+          ? 76.0f
+          : listTopInset + listBottomInset +
+                visibleRowCount * rowHeight +
+                std::max<CGFloat>(0.0f, static_cast<CGFloat>(visibleRowCount - 1)) * rowGap;
+  const CGFloat headerHeight = 32.0f;
+  const CGFloat spacing = 8.0f;
+  const CGFloat totalHeight = headerHeight + spacing + listHeight;
+  const CGFloat originX = std::floor((NSWidth(bounds) - contentWidth) * 0.5f);
+  const CGFloat originY = std::floor((NSHeight(bounds) - totalHeight) * 0.5f);
+
+  [titleLabel setFrame:NSMakeRect(originX, originY + listHeight + spacing + 2.0f, 200.0f, 28.0f)];
+  [startupClearButton_ setFrame:NSMakeRect(originX + contentWidth - 116.0f,
+                                           originY + listHeight + spacing,
+                                           116.0f,
+                                           28.0f)];
+  [startupRecentListView_ setFrame:NSMakeRect(originX, originY, contentWidth, listHeight)];
+}
+
 - (void)layoutChrome {
   if (contentHostView_ == nil || toolbarStrip_ == nil || tabBarView_ == nil) {
     return;
@@ -905,10 +1082,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (context == nil) {
     [toolbarStrip_ setHidden:YES];
     [contentHostView_ setFrame:NSMakeRect(0, 0, contentBounds.size.width, contentBounds.size.height)];
+    [startupView_ setHidden:NO];
+    [startupView_ setFrame:[contentHostView_ bounds]];
+    [self layoutStartupView];
+    [self rebuildStartupView];
     return;
   }
 
   [toolbarStrip_ setHidden:NO];
+  [startupView_ setHidden:YES];
   const NSRect contentRect = NSMakeRect(0,
                                         0,
                                         contentBounds.size.width,
@@ -1078,6 +1260,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   recentDocumentPaths_ = pdfview::core::note_recent_document(recentDocumentPaths_, path);
   pdfview::core::save_recent_documents(recentDocumentPaths_);
   [self rebuildOpenRecentMenu];
+  [self rebuildStartupView];
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
@@ -1114,6 +1297,19 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 }
 
+- (IBAction)openStartupRecentDocument:(id)sender {
+  if (![sender isKindOfClass:[NSButton class]]) {
+    return;
+  }
+
+  const NSInteger index = [(NSButton*)sender tag];
+  if (index < 0 || index >= static_cast<NSInteger>(recentDocumentPaths_.size())) {
+    return;
+  }
+
+  [self openDocumentAtPath:recentDocumentPaths_[index] makeActive:YES];
+}
+
 - (IBAction)openRecentDocument:(id)sender {
   if (![sender isKindOfClass:[NSMenuItem class]]) {
     return;
@@ -1132,6 +1328,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   recentDocumentPaths_.clear();
   pdfview::core::save_recent_documents(recentDocumentPaths_);
   [self rebuildOpenRecentMenu];
+  [self rebuildStartupView];
 }
 
 - (IBAction)closeCurrentTab:(id)sender {
