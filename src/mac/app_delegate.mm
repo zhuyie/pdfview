@@ -24,6 +24,18 @@
 
 @end
 
+@interface PassiveLabel : NSTextField
+@end
+
+@implementation PassiveLabel
+
+- (NSView*)hitTest:(NSPoint)point {
+  (void)point;
+  return nil;
+}
+
+@end
+
 @interface EdgeFadeView : NSView
 - (instancetype)initWithLeadingEdge:(BOOL)isLeadingEdge;
 @end
@@ -154,6 +166,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)goToPreviousPage;
 - (void)scrollToCurrentPageInContext:(PDFTabContext*)context;
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
+- (void)showPageIndicatorForContext:(PDFTabContext*)context;
+- (void)hidePageIndicator:(NSTimer*)timer;
+- (void)ensurePageIndicatorAttachedToContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
 - (PDFTabContext*)activeTabContext;
 - (PDFTabContext*)contextForDocumentPath:(const std::string&)path;
@@ -178,6 +193,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSButton* tabScrollLeftButton_;
   NSButton* tabScrollRightButton_;
   NSView* toolbarStrip_;
+  NSView* pageIndicatorView_;
+  PassiveLabel* pageIndicatorLabel_;
   NSComboBox* zoomComboBox_;
   NSButton* zoomOutButton_;
   NSButton* zoomInButton_;
@@ -192,6 +209,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   CGFloat tabStripScrollOffset_;
   PDFRenderCoordinator* renderCoordinator_;
   NSTimer* interactiveRenderTimer_;
+  NSTimer* pageIndicatorTimer_;
   PDFTabContext* interactiveRenderContext_;
   BOOL suppressScrollTracking_;
   BOOL shouldEnsureSelectedTabVisible_;
@@ -213,6 +231,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     recentDocumentPaths_ = pdfview::core::load_recent_documents();
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
+    pageIndicatorTimer_ = nil;
     interactiveRenderContext_ = nil;
     suppressScrollTracking_ = NO;
     shouldEnsureSelectedTabVisible_ = YES;
@@ -1144,6 +1163,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (context == nil) {
     selectedTabContext_ = nil;
     shouldEnsureSelectedTabVisible_ = YES;
+    [self hidePageIndicator:nil];
     [window_ setTitle:@"pdfview"];
     [self layoutChrome];
     [self updateToolbarForActiveTab];
@@ -1152,6 +1172,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   selectedTabContext_ = context;
   shouldEnsureSelectedTabVisible_ = YES;
+  [self hidePageIndicator:nil];
   for (PDFTabContext* tabContext in tabContexts_) {
     [tabContext->containerView_ setHidden:tabContext != selectedTabContext_];
   }
@@ -1176,6 +1197,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   if ([tabContexts_ count] == 0) {
     selectedTabContext_ = nil;
+    [self hidePageIndicator:nil];
     [window_ setTitle:@"pdfview"];
     [self layoutChrome];
     [self updateToolbarForActiveTab];
@@ -1564,12 +1586,103 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   context->viewModel_.update_current_page_from_scroll();
 }
 
+- (void)ensurePageIndicatorAttachedToContext:(PDFTabContext*)context {
+  if (context == nil) {
+    return;
+  }
+
+  if (pageIndicatorView_ == nil) {
+    pageIndicatorView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 72, 30)];
+    [pageIndicatorView_ setWantsLayer:YES];
+    [[pageIndicatorView_ layer] setCornerRadius:8.0f];
+    [[pageIndicatorView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.10 alpha:0.78] CGColor]];
+    [pageIndicatorView_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
+    [pageIndicatorView_ setHidden:YES];
+
+    pageIndicatorLabel_ = [[PassiveLabel alloc] initWithFrame:NSMakeRect(12, 6, 48, 18)];
+    [pageIndicatorLabel_ setEditable:NO];
+    [pageIndicatorLabel_ setBezeled:NO];
+    [pageIndicatorLabel_ setBordered:NO];
+    [pageIndicatorLabel_ setDrawsBackground:NO];
+    [pageIndicatorLabel_ setSelectable:NO];
+    [pageIndicatorLabel_ setAlignment:NSTextAlignmentCenter];
+    [pageIndicatorLabel_ setFont:[NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold]];
+    [pageIndicatorLabel_ setTextColor:[NSColor colorWithCalibratedWhite:1.0 alpha:0.96]];
+    [pageIndicatorLabel_ setUsesSingleLineMode:YES];
+    [[pageIndicatorLabel_ cell] setWraps:NO];
+    [[pageIndicatorLabel_ cell] setLineBreakMode:NSLineBreakByClipping];
+    [pageIndicatorView_ addSubview:pageIndicatorLabel_];
+  }
+
+  if ([pageIndicatorView_ superview] != context->containerView_) {
+    [pageIndicatorView_ removeFromSuperview];
+    [context->containerView_ addSubview:pageIndicatorView_ positioned:NSWindowAbove relativeTo:context->scrollView_];
+  }
+}
+
+- (void)showPageIndicatorForContext:(PDFTabContext*)context {
+  if (context == nil || ![self isContextActive:context] || context->viewModel_.page_count() <= 0) {
+    return;
+  }
+
+  [self ensurePageIndicatorAttachedToContext:context];
+
+  const int currentPage = std::max(0, context->viewModel_.view_state().current_page);
+  const int totalPages = context->viewModel_.page_count();
+  NSString* text = [NSString stringWithFormat:@"%d / %d", currentPage + 1, totalPages];
+  [pageIndicatorLabel_ setStringValue:text];
+
+  NSDictionary* attributes = @{
+    NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold]
+  };
+  const CGFloat textWidth = std::ceil([text sizeWithAttributes:attributes].width);
+  const CGFloat indicatorWidth = std::max(static_cast<CGFloat>(88.0), textWidth + 24.0f);
+  const CGFloat indicatorHeight = 30.0f;
+  const CGFloat rightMargin = 30.0f;
+  const BOOL hasHorizontalScroller = [context->scrollView_ hasHorizontalScroller];
+  const CGFloat bottomMargin = hasHorizontalScroller ? 24.0f : 16.0f;
+  const NSRect containerBounds = [context->containerView_ bounds];
+  [pageIndicatorView_ setFrame:NSMakeRect(containerBounds.size.width - indicatorWidth - rightMargin,
+                                          bottomMargin,
+                                          indicatorWidth,
+                                          indicatorHeight)];
+  [pageIndicatorLabel_ setFrame:NSMakeRect(12.0f,
+                                           6.0f,
+                                           indicatorWidth - 24.0f,
+                                           18.0f)];
+  [pageIndicatorView_ setHidden:NO];
+
+  if (pageIndicatorTimer_ != nil) {
+    [pageIndicatorTimer_ invalidate];
+    pageIndicatorTimer_ = nil;
+  }
+  pageIndicatorTimer_ =
+      [NSTimer scheduledTimerWithTimeInterval:1.8
+                                       target:self
+                                     selector:@selector(hidePageIndicator:)
+                                     userInfo:nil
+                                      repeats:NO];
+  [[NSRunLoop mainRunLoop] addTimer:pageIndicatorTimer_ forMode:NSRunLoopCommonModes];
+}
+
+- (void)hidePageIndicator:(NSTimer*)timer {
+  if (timer != nil && timer != pageIndicatorTimer_) {
+    return;
+  }
+  if (pageIndicatorTimer_ != nil) {
+    [pageIndicatorTimer_ invalidate];
+    pageIndicatorTimer_ = nil;
+  }
+  [pageIndicatorView_ setHidden:YES];
+}
+
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
   if (suppressScrollTracking_) {
     return;
   }
   PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
   [self updateCurrentPageFromScrollForContext:context];
+  [self showPageIndicatorForContext:context];
   [self beginInteractiveRenderingForContext:context];
   [self updateVisiblePagesForContext:context];
 }
@@ -1663,6 +1776,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   pdfview::core::flush_render_profile_summary();
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [self cancelInteractiveRendering];
+  [self hidePageIndicator:nil];
   if (keyMonitor_ != nil) {
     [NSEvent removeMonitor:keyMonitor_];
     keyMonitor_ = nil;
