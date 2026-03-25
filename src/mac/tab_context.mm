@@ -139,20 +139,6 @@ namespace {
   return viewModel_.current_logical_scale();
 }
 
-- (void)setScrollOrigin:(NSPoint)origin {
-  pdfview::core::ViewState* state = viewModel_.mutable_view_state();
-  state->scroll_x = origin.x;
-  state->scroll_y = origin.y;
-}
-
-- (void)updateCurrentPageFromScroll {
-  viewModel_.update_current_page_from_scroll();
-}
-
-- (pdfview::core::ViewRect)currentPageRect {
-  return viewModel_.current_page_rect();
-}
-
 - (void)syncPageFrames {
   [pageViewHost_ syncPageFrames:viewModel_.page_frames()];
 }

@@ -47,9 +47,6 @@ struct PageRenderCacheEntry {
 - (void)setManualScale:(float)scale;
 - (void)setScaleMode:(pdfview::core::ScaleMode)scaleMode;
 - (float)currentScale;
-- (void)setScrollOrigin:(NSPoint)origin;
-- (void)updateCurrentPageFromScroll;
-- (pdfview::core::ViewRect)currentPageRect;
 - (void)syncPageFrames;
 - (void)clearPageImageAtIndex:(int)pageIndex;
 - (void)applyPageImage:(NSImage*)image atIndex:(int)pageIndex;

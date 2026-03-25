@@ -86,6 +86,11 @@ void DocumentViewModel::relayout() {
   layout_result_ = compute_continuous_page_layout(page_sizes_, layout_config);
 }
 
+void DocumentViewModel::set_scroll_origin(float x, float y) {
+  view_state_.scroll_x = x;
+  view_state_.scroll_y = y;
+}
+
 ViewRect DocumentViewModel::visible_rect() const {
   ViewRect rect;
   rect.x = view_state_.scroll_x;

@@ -54,7 +54,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   int keptPageCount = 0;
   long long submittedPixelCount = 0;
 
-  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
+  context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
+                                        [[context->scrollView_ contentView] bounds].origin.y);
   context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
   const float renderScale = context->viewModel_.current_render_scale();
   const pdfview::core::PageCachePlan cachePlan =

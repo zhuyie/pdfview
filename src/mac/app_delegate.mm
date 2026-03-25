@@ -645,8 +645,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
         context->viewModel_.layout_result().document_height);
     [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
     [context->scrollView_ reflectScrolledClipView:clipView];
-    [context setScrollOrigin:[clipView bounds].origin];
-    [context updateCurrentPageFromScroll];
+    context->viewModel_.set_scroll_origin([clipView bounds].origin.x, [clipView bounds].origin.y);
+    context->viewModel_.update_current_page_from_scroll();
     [self updateVisiblePagesForContext:context];
   }
   suppressScrollTracking_ = NO;
@@ -660,7 +660,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   const std::chrono::steady_clock::time_point passStart = std::chrono::steady_clock::now();
   const CGFloat deviceScale = [self effectiveDeviceScaleForContext:context];
   const NSSize clipSize = [[context->scrollView_ contentView] bounds].size;
-  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
+  context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
+                                        [[context->scrollView_ contentView] bounds].origin.y);
   context->viewModel_.set_viewport_size(clipSize.width, clipSize.height);
   context->viewModel_.set_device_scale(static_cast<float>(deviceScale));
 
@@ -792,14 +793,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   [self cancelInteractiveRendering];
-  const pdfview::core::ViewRect pageRect = [context currentPageRect];
+  const pdfview::core::ViewRect pageRect = context->viewModel_.current_page_rect();
   if (pageRect.width <= 0.0f || pageRect.height <= 0.0f) {
     return;
   }
 
   const NSRect pageFrame = NSRectFromViewRect(pageRect);
   [[context->scrollView_ documentView] scrollRectToVisible:pageFrame];
-  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
+  context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
+                                        [[context->scrollView_ contentView] bounds].origin.y);
   [self updateVisiblePagesForContext:context];
 }
 
@@ -808,8 +810,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [context setScrollOrigin:[[context->scrollView_ contentView] bounds].origin];
-  [context updateCurrentPageFromScroll];
+  context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
+                                        [[context->scrollView_ contentView] bounds].origin.y);
+  context->viewModel_.update_current_page_from_scroll();
 }
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {

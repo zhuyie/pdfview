@@ -42,6 +42,7 @@ class DocumentViewModel {
   float current_render_scale() const;
 
   void relayout();
+  void set_scroll_origin(float x, float y);
   ViewRect visible_rect() const;
   PageCachePlan page_cache_plan(float preload_margin_y) const;
   PageRenderPlan page_render_plan() const;
