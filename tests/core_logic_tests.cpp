@@ -259,8 +259,8 @@ bool TestRecentDocumentEscapeRoundTrip() {
 }
 
 bool TestSameDocumentPath() {
-  return Expect(pdfview::core::same_document_path("tests/fixtures/smoke.pdf",
-                                                  "tests/fixtures/../fixtures/smoke.pdf"),
+  return Expect(pdfview::core::same_document_path("/tmp/pdfview_path_test/../smoke.pdf",
+                                                  "/tmp/smoke.pdf"),
                 "document path comparison should normalize equivalent paths");
 }
 
