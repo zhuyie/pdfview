@@ -181,6 +181,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSComboBox* zoomComboBox_;
   NSButton* zoomOutButton_;
   NSButton* zoomInButton_;
+  NSButton* zoomActualButton_;
   NSButton* fitWidthButton_;
   NSButton* fitPageButton_;
   NSMenu* openRecentMenu_;
@@ -837,7 +838,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                           @"Zoom In");
   [toolbarStrip_ addSubview:zoomInButton_];
 
-  fitWidthButton_ = MakeToolbarSymbolButton(NSMakeRect(176, 4, 32, 22),
+  zoomActualButton_ = MakeToolbarSymbolButton(NSMakeRect(176, 4, 32, 22),
+                                              @"1.circle",
+                                              @"100",
+                                              self,
+                                              @selector(zoomToActualSize),
+                                              @"Zoom to 100%");
+  [toolbarStrip_ addSubview:zoomActualButton_];
+
+  fitWidthButton_ = MakeToolbarSymbolButton(NSMakeRect(214, 4, 32, 22),
                                             @"arrow.left.and.right.square",
                                             @"Width",
                                             self,
@@ -845,7 +854,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                             @"Fit Width");
   [toolbarStrip_ addSubview:fitWidthButton_];
 
-  fitPageButton_ = MakeToolbarSymbolButton(NSMakeRect(214, 4, 32, 22),
+  fitPageButton_ = MakeToolbarSymbolButton(NSMakeRect(252, 4, 32, 22),
                                            @"document",
                                            @"Page",
                                            self,
@@ -907,8 +916,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (context == nil) {
     [zoomComboBox_ setStringValue:@""];
     [zoomComboBox_ setEnabled:NO];
-    [fitWidthButton_ setEnabled:NO];
-    [fitPageButton_ setEnabled:NO];
     return;
   }
 
@@ -920,6 +927,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [zoomComboBox_ setEnabled:YES];
   [zoomOutButton_ setEnabled:currentScale > kMinimumManualScale + 0.001f];
   [zoomInButton_ setEnabled:currentScale < kMaximumManualScale - 0.001f];
+  [zoomActualButton_ setEnabled:std::abs(currentScale - 1.0f) > 0.001f];
   [fitWidthButton_ setEnabled:YES];
   [fitPageButton_ setEnabled:YES];
   [fitWidthButton_ setState:context->viewModel_.view_state().scale_mode == pdfview::core::ScaleMode::FitWidth
