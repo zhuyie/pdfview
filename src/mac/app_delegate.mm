@@ -655,10 +655,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (anchorPageIndex >= 0 && anchorPageIndex < static_cast<int>(oldPageFrames.size())) {
     oldPageRect = oldPageFrames[anchorPageIndex];
   }
-  float anchorRatio = 0.0f;
+  CGFloat anchorOffsetY = 0.0;
+  BOOL anchorOffsetScalesWithPage = NO;
   if (oldPageRect.height > 0.0f) {
-    anchorRatio = static_cast<float>((visibleBounds.origin.y - oldPageRect.y) / oldPageRect.height);
-    anchorRatio = std::max(0.0f, std::min(anchorRatio, 1.0f));
+    anchorOffsetY = visibleBounds.origin.y - oldPageRect.y;
+    anchorOffsetScalesWithPage =
+        visibleBounds.origin.y >= oldPageRect.y &&
+        visibleBounds.origin.y < oldPageRect.y + oldPageRect.height;
   }
 
   updateMode(context);
@@ -677,7 +680,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
   if (newPageRect.height > 0.0f) {
     NSClipView* clipView = [context->scrollView_ contentView];
-    CGFloat targetOriginY = newPageRect.y + newPageRect.height * anchorRatio;
+    CGFloat targetOriginY = newPageRect.y + anchorOffsetY;
+    if (anchorOffsetScalesWithPage && oldPageRect.height > 0.0f) {
+      targetOriginY =
+          newPageRect.y + (anchorOffsetY / oldPageRect.height) * newPageRect.height;
+    }
     const CGFloat maxOriginY =
         std::max<CGFloat>(0.0,
                           context->viewModel_.layout_result().document_height - viewportHeight);
