@@ -164,7 +164,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)fitZoomToPage;
 - (void)goToNextPage;
 - (void)goToPreviousPage;
+- (void)pageDown;
+- (void)pageUp;
 - (void)scrollToCurrentPageInContext:(PDFTabContext*)context;
+- (void)scrollActiveContextByViewportDelta:(CGFloat)deltaY;
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
 - (void)showPageIndicatorForContext:(PDFTabContext*)context;
 - (void)hidePageIndicator:(NSTimer*)timer;
@@ -1556,6 +1559,42 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self scrollToCurrentPageInContext:context];
 }
 
+- (void)pageDown {
+  [self scrollActiveContextByViewportDelta:1.0f];
+}
+
+- (void)pageUp {
+  [self scrollActiveContextByViewportDelta:-1.0f];
+}
+
+- (void)scrollActiveContextByViewportDelta:(CGFloat)deltaY {
+  PDFTabContext* context = [self activeTabContext];
+  if (context == nil) {
+    return;
+  }
+
+  NSClipView* clipView = [context->scrollView_ contentView];
+  const NSRect visibleBounds = [clipView bounds];
+  const CGFloat viewportHeight = NSHeight(visibleBounds);
+  const CGFloat pageStep = std::max(static_cast<CGFloat>(80.0), viewportHeight * 0.9f);
+  const CGFloat maxOriginY = std::max(static_cast<CGFloat>(0.0),
+                                      NSHeight([context->documentView_ frame]) - viewportHeight);
+  const CGFloat targetOriginY =
+      std::min(std::max(visibleBounds.origin.y + deltaY * pageStep, static_cast<CGFloat>(0.0)),
+               maxOriginY);
+  if (std::abs(targetOriginY - visibleBounds.origin.y) < 0.5f) {
+    return;
+  }
+
+  [self cancelInteractiveRendering];
+  [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
+  [context->scrollView_ reflectScrolledClipView:clipView];
+  [self updateCurrentPageFromScrollForContext:context];
+  [self showPageIndicatorForContext:context];
+  [self beginInteractiveRenderingForContext:context];
+  [self updateVisiblePagesForContext:context];
+}
+
 - (void)scrollToCurrentPageInContext:(PDFTabContext*)context {
   if (context == nil) {
     return;
@@ -1719,6 +1758,14 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     }
     if (key == '-') {
       [self zoomOut];
+      return nil;
+    }
+    if (key == NSPageDownFunctionKey) {
+      [self pageDown];
+      return nil;
+    }
+    if (key == NSPageUpFunctionKey) {
+      [self pageUp];
       return nil;
     }
     if (key == NSRightArrowFunctionKey || key == NSDownArrowFunctionKey ||
