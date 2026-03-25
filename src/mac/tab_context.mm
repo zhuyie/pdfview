@@ -31,7 +31,11 @@ namespace {
 
     scrollView_ = [[NSScrollView alloc] initWithFrame:frame];
     [scrollView_ setHasVerticalScroller:YES];
-    [scrollView_ setHasHorizontalScroller:YES];
+    [scrollView_ setHasHorizontalScroller:NO];
+    [scrollView_ setAutohidesScrollers:NO];
+    if ([scrollView_ respondsToSelector:@selector(setScrollerStyle:)]) {
+      [scrollView_ setScrollerStyle:NSScrollerStyleLegacy];
+    }
     [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [scrollView_ setBorderType:NSNoBorder];
     [scrollView_ setBackgroundColor:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]];
