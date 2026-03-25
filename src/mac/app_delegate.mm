@@ -46,6 +46,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)installToolbarStripInView:(NSView*)contentView;
 - (void)layoutChrome;
 - (void)rebuildTabStrip;
+- (IBAction)scrollTabStripLeft:(id)sender;
+- (IBAction)scrollTabStripRight:(id)sender;
 - (void)updateToolbarForActiveTab;
 - (BOOL)applyZoomString:(NSString*)rawValue;
 - (IBAction)zoomComboBoxChanged:(id)sender;
@@ -94,7 +96,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 @implementation AppDelegate {
   NSWindow* window_;
   NSView* tabBarView_;
+  NSView* tabStripContentView_;
   NSView* contentHostView_;
+  NSButton* tabScrollLeftButton_;
+  NSButton* tabScrollRightButton_;
   NSView* toolbarStrip_;
   NSComboBox* zoomComboBox_;
   NSButton* zoomOutButton_;
@@ -106,10 +111,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
   PDFTabContext* selectedTabContext_;
+  CGFloat tabStripScrollOffset_;
   PDFRenderCoordinator* renderCoordinator_;
   NSTimer* interactiveRenderTimer_;
   PDFTabContext* interactiveRenderContext_;
   BOOL suppressScrollTracking_;
+  BOOL shouldEnsureSelectedTabVisible_;
   id keyMonitor_;
   int argc_;
   const char** argv_;
@@ -124,11 +131,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     zoomComboBoxEditing_ = NO;
     openRecentMenu_ = nil;
     selectedTabContext_ = nil;
+    tabStripScrollOffset_ = 0.0f;
     recentDocumentPaths_ = pdfview::core::load_recent_documents();
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     interactiveRenderContext_ = nil;
     suppressScrollTracking_ = NO;
+    shouldEnsureSelectedTabVisible_ = YES;
     tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
@@ -327,22 +336,45 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   NSArray<NSView*>* subviews = [[tabBarView_ subviews] copy];
   for (NSView* subview in subviews) {
-    if ([subview isKindOfClass:[NSBox class]]) {
+    if ([subview isKindOfClass:[NSBox class]] ||
+        subview == tabStripContentView_ ||
+        subview == tabScrollLeftButton_ ||
+        subview == tabScrollRightButton_) {
       continue;
     }
     [subview removeFromSuperview];
   }
 
-  CGFloat x = 10.0f;
+  NSArray<NSView*>* tabSubviews = [[tabStripContentView_ subviews] copy];
+  for (NSView* subview in tabSubviews) {
+    [subview removeFromSuperview];
+  }
+
+  if ([tabContexts_ count] == 0) {
+    tabStripScrollOffset_ = 0.0f;
+    [tabScrollLeftButton_ setHidden:YES];
+    [tabScrollRightButton_ setHidden:YES];
+    return;
+  }
+
   const CGFloat tabHeight = 26.0f;
   const CGFloat topInset = 4.0f;
+  const CGFloat tabGap = 8.0f;
+  const CGFloat leadingInset = 10.0f;
+  const CGFloat trailingInset = 10.0f;
   const CGFloat leftPadding = 12.0f;
   const CGFloat closeButtonSize = 22.0f;
   const CGFloat closeRightInset = 8.0f;
   const CGFloat titleToCloseGap = 8.0f;
   const CGFloat rightReserved = closeButtonSize + closeRightInset + titleToCloseGap;
+  const CGFloat scrollButtonWidth = 22.0f;
+  const CGFloat scrollButtonGap = 6.0f;
+  const CGFloat scrollButtonsLeftGap = 12.0f;
+
+  std::vector<CGFloat> tabWidths;
+  tabWidths.reserve([tabContexts_ count]);
+  CGFloat totalTabWidth = 0.0f;
   for (PDFTabContext* context in tabContexts_) {
-    const BOOL isSelected = context == selectedTabContext_;
     NSString* title = [context tabTitle];
     NSDictionary* attributes = @{
       NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
@@ -351,6 +383,77 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
         std::ceil([title sizeWithAttributes:attributes].width);
     const CGFloat tabWidth =
         std::min(std::max(titleWidth + leftPadding + rightReserved + 4.0, 150.0), 320.0);
+    tabWidths.push_back(tabWidth);
+    totalTabWidth += tabWidth;
+  }
+  if ([tabContexts_ count] > 1) {
+    totalTabWidth += tabGap * ([tabContexts_ count] - 1);
+  }
+
+  const CGFloat fullTrackWidth =
+      std::max(NSWidth([tabBarView_ bounds]) - leadingInset - trailingInset, 0.0);
+  const BOOL needsScrollButtons = totalTabWidth > fullTrackWidth;
+  const CGFloat buttonAreaWidth =
+      needsScrollButtons
+          ? (scrollButtonWidth * 2.0f + scrollButtonGap + scrollButtonsLeftGap)
+          : 0.0f;
+  const CGFloat trackWidth = std::max(fullTrackWidth - buttonAreaWidth, 0.0);
+  const CGFloat maxOffset = std::max(totalTabWidth - trackWidth, 0.0);
+  tabStripScrollOffset_ = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
+
+  NSUInteger selectedIndex = NSNotFound;
+  for (NSUInteger index = 0; index < [tabContexts_ count]; ++index) {
+    if ([tabContexts_ objectAtIndex:index] == selectedTabContext_) {
+      selectedIndex = index;
+      break;
+    }
+  }
+
+  if (shouldEnsureSelectedTabVisible_ && selectedIndex != NSNotFound) {
+    CGFloat selectedMinX = 0.0f;
+    for (NSUInteger index = 0; index < selectedIndex; ++index) {
+      selectedMinX += tabWidths[index] + tabGap;
+    }
+    const CGFloat selectedMaxX = selectedMinX + tabWidths[selectedIndex];
+    if (selectedMinX < tabStripScrollOffset_) {
+      tabStripScrollOffset_ = selectedMinX;
+    } else if (selectedMaxX > tabStripScrollOffset_ + trackWidth) {
+      tabStripScrollOffset_ = selectedMaxX - trackWidth;
+    }
+    tabStripScrollOffset_ = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
+  }
+  shouldEnsureSelectedTabVisible_ = NO;
+
+  [tabScrollLeftButton_ setHidden:!needsScrollButtons];
+  [tabScrollRightButton_ setHidden:!needsScrollButtons];
+  [tabStripContentView_ setFrame:NSMakeRect(leadingInset,
+                                            0.0f,
+                                            trackWidth,
+                                            NSHeight([tabBarView_ bounds]))];
+  if (needsScrollButtons) {
+    const CGFloat buttonY = 6.0f;
+    const CGFloat rightButtonX = NSWidth([tabBarView_ bounds]) - trailingInset - scrollButtonWidth;
+    const CGFloat leftButtonX = rightButtonX - scrollButtonGap - scrollButtonWidth;
+    [tabScrollLeftButton_ setFrame:NSMakeRect(leftButtonX, buttonY, scrollButtonWidth, 22.0f)];
+    [tabScrollRightButton_ setFrame:NSMakeRect(rightButtonX, buttonY, scrollButtonWidth, 22.0f)];
+    [tabScrollLeftButton_ setEnabled:tabStripScrollOffset_ > 0.5f];
+    [tabScrollRightButton_ setEnabled:tabStripScrollOffset_ + trackWidth < totalTabWidth - 0.5f];
+  }
+
+  CGFloat x = -tabStripScrollOffset_;
+  for (NSUInteger tabIndex = 0; tabIndex < [tabContexts_ count]; ++tabIndex) {
+    PDFTabContext* context = [tabContexts_ objectAtIndex:tabIndex];
+    const BOOL isSelected = context == selectedTabContext_;
+    const CGFloat tabWidth = tabWidths[tabIndex];
+    NSString* title = [context tabTitle];
+
+    if (x + tabWidth < -tabGap) {
+      x += tabWidth + tabGap;
+      continue;
+    }
+    if (x > trackWidth + tabGap) {
+      break;
+    }
 
     NSView* tabContainer =
         [[NSView alloc] initWithFrame:NSMakeRect(x, topInset, tabWidth, tabHeight)];
@@ -361,7 +464,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [[tabContainer layer] setBackgroundColor:[(isSelected
                                                ? [NSColor colorWithCalibratedWhite:1.0 alpha:1.0]
                                                : [NSColor colorWithCalibratedWhite:0.90 alpha:1.0]) CGColor]];
-    [tabBarView_ addSubview:tabContainer];
+    [tabStripContentView_ addSubview:tabContainer];
 
     const CGFloat labelHeight = 17.0f;
     const CGFloat labelY = std::floor((tabHeight - labelHeight) * 0.5f) - 1.0f;
@@ -415,7 +518,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [closeButton setTag:[tabContexts_ indexOfObjectIdenticalTo:context]];
     [tabContainer addSubview:closeButton];
 
-    x += tabWidth + 8.0f;
+    x += tabWidth + tabGap;
+  }
+
+  if (needsScrollButtons) {
+    [tabBarView_ addSubview:tabScrollLeftButton_ positioned:NSWindowAbove relativeTo:nil];
+    [tabBarView_ addSubview:tabScrollRightButton_ positioned:NSWindowAbove relativeTo:nil];
   }
 }
 
@@ -437,12 +545,37 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [tabBarView_ setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   [tabBarView_ setWantsLayer:YES];
   [[tabBarView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.94 alpha:1.0] CGColor]];
+  [[tabBarView_ layer] setMasksToBounds:YES];
   [contentView addSubview:tabBarView_];
+
+  tabStripContentView_ = [[NSView alloc] initWithFrame:[tabBarView_ bounds]];
+  [tabStripContentView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [tabStripContentView_ setWantsLayer:YES];
+  [[tabStripContentView_ layer] setMasksToBounds:YES];
+  [tabBarView_ addSubview:tabStripContentView_];
 
   NSBox* divider = [[NSBox alloc] initWithFrame:NSMakeRect(0, 0, 100, 1)];
   [divider setBoxType:NSBoxSeparator];
   [divider setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
-  [tabBarView_ addSubview:divider];
+  [tabBarView_ addSubview:divider positioned:NSWindowAbove relativeTo:tabStripContentView_];
+
+  tabScrollRightButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 22, 22)];
+  [tabScrollRightButton_ setTitle:@"›"];
+  [tabScrollRightButton_ setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightSemibold]];
+  [tabScrollRightButton_ setBezelStyle:NSBezelStyleTexturedRounded];
+  [tabScrollRightButton_ setTarget:self];
+  [tabScrollRightButton_ setAction:@selector(scrollTabStripRight:)];
+  [tabScrollRightButton_ setHidden:YES];
+  [tabBarView_ addSubview:tabScrollRightButton_];
+
+  tabScrollLeftButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 22, 22)];
+  [tabScrollLeftButton_ setTitle:@"‹"];
+  [tabScrollLeftButton_ setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightSemibold]];
+  [tabScrollLeftButton_ setBezelStyle:NSBezelStyleTexturedRounded];
+  [tabScrollLeftButton_ setTarget:self];
+  [tabScrollLeftButton_ setAction:@selector(scrollTabStripLeft:)];
+  [tabScrollLeftButton_ setHidden:YES];
+  [tabBarView_ addSubview:tabScrollLeftButton_];
 
   contentHostView_ = [[NSView alloc] initWithFrame:[contentView bounds]];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -777,6 +910,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)selectTabContext:(PDFTabContext*)context {
   if (context == nil) {
     selectedTabContext_ = nil;
+    shouldEnsureSelectedTabVisible_ = YES;
     [window_ setTitle:@"pdfview"];
     [self layoutChrome];
     [self updateToolbarForActiveTab];
@@ -784,6 +918,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   selectedTabContext_ = context;
+  shouldEnsureSelectedTabVisible_ = YES;
   for (PDFTabContext* tabContext in tabContexts_) {
     [tabContext->containerView_ setHidden:tabContext != selectedTabContext_];
   }
@@ -821,6 +956,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
+  shouldEnsureSelectedTabVisible_ = YES;
   [self layoutChrome];
   [self updateToolbarForActiveTab];
 }
@@ -850,6 +986,20 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   [self closeTabContext:[tabContexts_ objectAtIndex:index]];
+}
+
+- (IBAction)scrollTabStripLeft:(id)sender {
+  (void)sender;
+  tabStripScrollOffset_ = std::max(tabStripScrollOffset_ - 220.0, 0.0);
+  shouldEnsureSelectedTabVisible_ = NO;
+  [self rebuildTabStrip];
+}
+
+- (IBAction)scrollTabStripRight:(id)sender {
+  (void)sender;
+  tabStripScrollOffset_ += 220.0f;
+  shouldEnsureSelectedTabVisible_ = NO;
+  [self rebuildTabStrip];
 }
 
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView {
