@@ -104,7 +104,8 @@ if(APPLE)
     )
     target_link_libraries(pdfview_mac PRIVATE pdfview_core "-framework AppKit" "-framework UniformTypeIdentifiers")
     set_target_properties(pdfview_mac PROPERTIES
-        MACOSX_BUNDLE_BUNDLE_NAME "pdfview"
+        OUTPUT_NAME "PDFView"
+        MACOSX_BUNDLE_BUNDLE_NAME "PDFView"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.pdfview.app"
         MACOSX_BUNDLE_ICON_FILE "pdfview.icns"
         MACOSX_BUNDLE_INFO_PLIST "${PDFVIEW_MAC_INFO_PLIST}"

@@ -269,7 +269,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                             defer:NO];
 
   [window_ center];
-  [window_ setTitle:@"pdfview"];
+  [window_ setTitle:@"PDFView"];
   [window_ setDelegate:self];
 
   [self installMainMenu];
@@ -292,9 +292,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   NSMenuItem* appMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
   [mainMenu addItem:appMenuItem];
-  NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"pdfview"];
+  NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"PDFView"];
   NSMenuItem* quitItem =
-      [[NSMenuItem alloc] initWithTitle:@"Quit pdfview"
+      [[NSMenuItem alloc] initWithTitle:@"Quit PDFView"
                                  action:@selector(terminate:)
                           keyEquivalent:@"q"];
   [appMenu addItem:quitItem];
@@ -388,7 +388,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSMenuItem* helpMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
   [mainMenu addItem:helpMenuItem];
   NSMenu* helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
-  NSMenuItem* helpItem = [[NSMenuItem alloc] initWithTitle:@"pdfview Help"
+  NSMenuItem* helpItem = [[NSMenuItem alloc] initWithTitle:@"PDFView Help"
                                                     action:@selector(showHelp:)
                                              keyEquivalent:@"?"];
   [helpItem setTarget:self];
@@ -1305,7 +1305,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)presentError:(NSString*)message {
   NSAlert* alert = [[NSAlert alloc] init];
   [alert setAlertStyle:NSAlertStyleCritical];
-  [alert setMessageText:@"pdfview"];
+  [alert setMessageText:@"PDFView"];
   [alert setInformativeText:message];
   [alert runModal];
 }
@@ -1416,7 +1416,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   (void)sender;
   NSAlert* alert = [[NSAlert alloc] init];
   [alert setAlertStyle:NSAlertStyleInformational];
-  [alert setMessageText:@"pdfview Help"];
+  [alert setMessageText:@"PDFView Help"];
   [alert setInformativeText:@"Use File > Open... to open PDFs, tabs to switch documents, Cmd+W to close the current tab, and Cmd+Q to quit."];
   [alert runModal];
 }
@@ -1440,7 +1440,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     selectedTabContext_ = nil;
     shouldEnsureSelectedTabVisible_ = YES;
     [self hidePageIndicator:nil];
-    [window_ setTitle:@"pdfview"];
+    [window_ setTitle:@"PDFView"];
     [self layoutChrome];
     [self updateToolbarForActiveTab];
     return;
@@ -1453,7 +1453,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [tabContext->containerView_ setHidden:tabContext != selectedTabContext_];
   }
 
-  [window_ setTitle:[NSString stringWithFormat:@"pdfview - %@", [context tabTitle]]];
+  [window_ setTitle:[NSString stringWithFormat:@"PDFView - %@", [context tabTitle]]];
   [self layoutChrome];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
@@ -1474,7 +1474,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if ([tabContexts_ count] == 0) {
     selectedTabContext_ = nil;
     [self hidePageIndicator:nil];
-    [window_ setTitle:@"pdfview"];
+    [window_ setTitle:@"PDFView"];
     [self layoutChrome];
     [self updateToolbarForActiveTab];
     return;
