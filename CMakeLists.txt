@@ -86,7 +86,12 @@ endif()
 
 if(APPLE)
     enable_language(OBJCXX)
+    set(PDFVIEW_MAC_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/pdfview.icns")
+    set_source_files_properties("${PDFVIEW_MAC_ICON}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
     add_executable(pdfview_mac MACOSX_BUNDLE
+        "${PDFVIEW_MAC_ICON}"
         src/mac/app_delegate.mm
         src/mac/image_bridge.mm
         src/mac/main.mm
@@ -98,6 +103,7 @@ if(APPLE)
     set_target_properties(pdfview_mac PROPERTIES
         MACOSX_BUNDLE_BUNDLE_NAME "pdfview"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.pdfview.app"
+        MACOSX_BUNDLE_ICON_FILE "pdfview.icns"
     )
     pdfview_bundle_pdfium_runtime(pdfview_mac)
 elseif(WIN32)

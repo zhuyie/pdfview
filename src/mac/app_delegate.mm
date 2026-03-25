@@ -26,6 +26,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 @interface AppDelegate () <NSWindowDelegate, NSTabViewDelegate, NSComboBoxDelegate, NSTextFieldDelegate, PDFRenderCoordinatorDelegate>
 - (void)installMainMenu;
+- (void)installApplicationIcon;
 - (void)installToolbarStripInView:(NSView*)contentView;
 - (void)layoutChrome;
 - (void)updateToolbarForActiveTab;
@@ -112,6 +113,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [window_ setDelegate:self];
 
   [self installMainMenu];
+  [self installApplicationIcon];
 
   NSView* contentView = [window_ contentView];
   tabView_ = [[NSTabView alloc] initWithFrame:[contentView bounds]];
@@ -190,6 +192,19 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [NSApp setHelpMenu:helpMenu];
 
   [NSApp setMainMenu:mainMenu];
+}
+
+- (void)installApplicationIcon {
+  NSBundle* bundle = [NSBundle mainBundle];
+  NSString* iconPath = [bundle pathForResource:@"pdfview" ofType:@"icns"];
+  if (iconPath == nil) {
+    return;
+  }
+
+  NSImage* iconImage = [[NSImage alloc] initWithContentsOfFile:iconPath];
+  if (iconImage != nil) {
+    [NSApp setApplicationIconImage:iconImage];
+  }
 }
 
 - (void)installToolbarStripInView:(NSView*)contentView {
