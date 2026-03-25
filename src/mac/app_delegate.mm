@@ -60,8 +60,43 @@
 
 namespace {
 
+constexpr float kMinimumManualScale = 0.1f;
+constexpr float kMaximumManualScale = 5.0f;
+
 NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
+}
+
+NSButton* MakeToolbarSymbolButton(NSRect frame,
+                                  NSString* symbolName,
+                                  NSString* fallbackTitle,
+                                  id target,
+                                  SEL action,
+                                  NSString* toolTip) {
+  NSButton* button = [[NSButton alloc] initWithFrame:frame];
+  [button setBezelStyle:NSBezelStyleTexturedRounded];
+  [button setTarget:target];
+  [button setAction:action];
+  [button setToolTip:toolTip];
+
+  NSImage* symbolImage = nil;
+  if ([NSImage respondsToSelector:@selector(imageWithSystemSymbolName:accessibilityDescription:)]) {
+    symbolImage = [NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:toolTip];
+  }
+
+  if (symbolImage != nil) {
+    if ([NSImageSymbolConfiguration class] != Nil) {
+      NSImageSymbolConfiguration* configuration =
+          [NSImageSymbolConfiguration configurationWithPointSize:13.0 weight:NSFontWeightSemibold];
+      symbolImage = [symbolImage imageWithSymbolConfiguration:configuration];
+    }
+    [button setImage:symbolImage];
+    [button setImagePosition:NSImageOnly];
+  } else {
+    [button setTitle:fallbackTitle];
+  }
+
+  return button;
 }
 
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
@@ -777,11 +812,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [divider setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
   [toolbarStrip_ addSubview:divider];
 
-  zoomOutButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(12, 4, 26, 22)];
-  [zoomOutButton_ setTitle:@"-"];
-  [zoomOutButton_ setBezelStyle:NSBezelStyleTexturedRounded];
-  [zoomOutButton_ setTarget:self];
-  [zoomOutButton_ setAction:@selector(zoomOut)];
+  zoomOutButton_ = MakeToolbarSymbolButton(NSMakeRect(12, 4, 26, 22),
+                                           @"minus",
+                                           @"-",
+                                           self,
+                                           @selector(zoomOut),
+                                           @"Zoom Out");
   [toolbarStrip_ addSubview:zoomOutButton_];
 
   zoomComboBox_ = [[NSComboBox alloc] initWithFrame:NSMakeRect(44, 3, 92, 24)];
@@ -793,25 +829,28 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [zoomComboBox_ addItemsWithObjectValues:[NSArray arrayWithObjects:@"50%", @"75%", @"100%", @"125%", @"150%", @"200%", @"300%", nil]];
   [toolbarStrip_ addSubview:zoomComboBox_];
 
-  zoomInButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(142, 4, 26, 22)];
-  [zoomInButton_ setTitle:@"+"];
-  [zoomInButton_ setBezelStyle:NSBezelStyleTexturedRounded];
-  [zoomInButton_ setTarget:self];
-  [zoomInButton_ setAction:@selector(zoomIn)];
+  zoomInButton_ = MakeToolbarSymbolButton(NSMakeRect(142, 4, 26, 22),
+                                          @"plus",
+                                          @"+",
+                                          self,
+                                          @selector(zoomIn),
+                                          @"Zoom In");
   [toolbarStrip_ addSubview:zoomInButton_];
 
-  fitWidthButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(176, 4, 62, 22)];
-  [fitWidthButton_ setTitle:@"Width"];
-  [fitWidthButton_ setBezelStyle:NSBezelStyleTexturedRounded];
-  [fitWidthButton_ setTarget:self];
-  [fitWidthButton_ setAction:@selector(resetZoomToFitWidth)];
+  fitWidthButton_ = MakeToolbarSymbolButton(NSMakeRect(176, 4, 32, 22),
+                                            @"arrow.left.and.right.square",
+                                            @"Width",
+                                            self,
+                                            @selector(resetZoomToFitWidth),
+                                            @"Fit Width");
   [toolbarStrip_ addSubview:fitWidthButton_];
 
-  fitPageButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(244, 4, 56, 22)];
-  [fitPageButton_ setTitle:@"Page"];
-  [fitPageButton_ setBezelStyle:NSBezelStyleTexturedRounded];
-  [fitPageButton_ setTarget:self];
-  [fitPageButton_ setAction:@selector(fitZoomToPage)];
+  fitPageButton_ = MakeToolbarSymbolButton(NSMakeRect(214, 4, 32, 22),
+                                           @"document",
+                                           @"Page",
+                                           self,
+                                           @selector(fitZoomToPage),
+                                           @"Fit Page");
   [toolbarStrip_ addSubview:fitPageButton_];
 }
 
@@ -877,7 +916,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
+  const float currentScale = [self currentScaleForContext:context];
   [zoomComboBox_ setEnabled:YES];
+  [zoomOutButton_ setEnabled:currentScale > kMinimumManualScale + 0.001f];
+  [zoomInButton_ setEnabled:currentScale < kMaximumManualScale - 0.001f];
   [fitWidthButton_ setEnabled:YES];
   [fitPageButton_ setEnabled:YES];
   [fitWidthButton_ setState:context->viewModel_.view_state().scale_mode == pdfview::core::ScaleMode::FitWidth
@@ -887,7 +929,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                ? NSControlStateValueOn
                                : NSControlStateValueOff];
   [zoomComboBox_ setStringValue:[NSString stringWithFormat:@"%.0f%%",
-                                                           [self currentScaleForContext:context] * 100.0f]];
+                                                           currentScale * 100.0f]];
 }
 
 - (BOOL)applyZoomString:(NSString*)rawValue {
@@ -905,7 +947,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return NO;
   }
 
-  [context setManualScale:std::max(static_cast<float>(zoomPercent / 100.0), 0.1f)];
+  [context setManualScale:std::min(std::max(static_cast<float>(zoomPercent / 100.0f),
+                                            kMinimumManualScale),
+                                   kMaximumManualScale)];
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
   return YES;
@@ -1398,7 +1442,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self applyScaleChangeForContext:context
                         invalidate:NO
                         updateMode:^(PDFTabContext* scaleContext) {
-                          [scaleContext setManualScale:std::min([self currentScaleForContext:scaleContext] * 1.25f, 5.0f)];
+                          [scaleContext setManualScale:std::min([self currentScaleForContext:scaleContext] * 1.25f,
+                                                                kMaximumManualScale)];
                         }];
   [self updateToolbarForActiveTab];
 }
@@ -1412,7 +1457,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self applyScaleChangeForContext:context
                         invalidate:NO
                         updateMode:^(PDFTabContext* scaleContext) {
-                          [scaleContext setManualScale:std::max([self currentScaleForContext:scaleContext] / 1.25f, 0.1f)];
+                          [scaleContext setManualScale:std::max([self currentScaleForContext:scaleContext] / 1.25f,
+                                                                kMinimumManualScale)];
                         }];
   [self updateToolbarForActiveTab];
 }
