@@ -243,38 +243,6 @@ bool TestPageCachePlanKeepsNeighborPages() {
                 "keep range should retain one extra page on both sides");
 }
 
-int FindPageAtViewportTopForTest(const std::vector<pdfview::core::ViewRect>& page_frames, float top_y) {
-  if (page_frames.empty()) {
-    return 0;
-  }
-
-  for (int page_index = 0; page_index < static_cast<int>(page_frames.size()); ++page_index) {
-    const pdfview::core::ViewRect& frame = page_frames[page_index];
-    if (top_y >= frame.y && top_y < frame.y + frame.height) {
-      return page_index;
-    }
-  }
-
-  int nearest_page_index = 0;
-  float nearest_distance = 0.0f;
-  for (int page_index = 0; page_index < static_cast<int>(page_frames.size()); ++page_index) {
-    const pdfview::core::ViewRect& frame = page_frames[page_index];
-    float distance = 0.0f;
-    if (top_y < frame.y) {
-      distance = frame.y - top_y;
-    } else {
-      distance = top_y - (frame.y + frame.height);
-    }
-
-    if (page_index == 0 || distance < nearest_distance) {
-      nearest_page_index = page_index;
-      nearest_distance = distance;
-    }
-  }
-
-  return nearest_page_index;
-}
-
 bool TestViewportTopPageSelection() {
   std::vector<pdfview::core::ViewRect> page_frames(3);
   page_frames[0].y = 20.0f;
@@ -284,31 +252,57 @@ bool TestViewportTopPageSelection() {
   page_frames[2].y = 668.0f;
   page_frames[2].height = 300.0f;
 
-  return Expect(FindPageAtViewportTopForTest(page_frames, 310.0f) == 0,
+  return Expect(pdfview::core::find_page_at_viewport_top(page_frames, 310.0f) == 0,
                 "viewport top near the end of a page should still anchor to that page") &&
-         Expect(FindPageAtViewportTopForTest(page_frames, 332.0f) == 0,
+         Expect(pdfview::core::find_page_at_viewport_top(page_frames, 332.0f) == 0,
                 "viewport top inside the gap should prefer the previous nearby page") &&
-         Expect(FindPageAtViewportTopForTest(page_frames, 360.0f) == 1,
+         Expect(pdfview::core::find_page_at_viewport_top(page_frames, 360.0f) == 1,
                 "viewport top inside the next page should anchor to that page");
 }
 
 bool TestZoomAnchorRatioPreservesViewportTopOffset() {
-  pdfview::core::ViewRect old_page_rect;
-  old_page_rect.y = 3440.0f;
-  old_page_rect.height = 1200.0f;
+  std::vector<pdfview::core::ViewRect> old_page_frames(1);
+  old_page_frames[0].y = 3440.0f;
+  old_page_frames[0].height = 1200.0f;
 
-  const float old_viewport_top = 4580.0f;
-  const float anchor_ratio = (old_viewport_top - old_page_rect.y) / old_page_rect.height;
+  const pdfview::core::ViewportAnchor anchor =
+      pdfview::core::capture_viewport_anchor(old_page_frames, 4580.0f);
 
-  pdfview::core::ViewRect new_page_rect;
-  new_page_rect.y = 1980.0f;
-  new_page_rect.height = 400.0f;
+  std::vector<pdfview::core::ViewRect> new_page_frames(1);
+  new_page_frames[0].y = 1980.0f;
+  new_page_frames[0].height = 400.0f;
 
-  const float new_viewport_top = new_page_rect.y + new_page_rect.height * anchor_ratio;
-  return Expect(NearlyEqual(anchor_ratio, 0.95f),
-                "anchor ratio should reflect the old viewport top inside the page") &&
+  const float new_viewport_top =
+      pdfview::core::restore_viewport_anchor(anchor, new_page_frames, 300.0f, 5000.0f);
+  return Expect(anchor.page_index == 0, "captured anchor should keep the original page index") &&
+         Expect(NearlyEqual(anchor.offset_y, 1140.0f),
+                "captured anchor should keep the old viewport top offset inside the page") &&
+         Expect(anchor.offset_scales_with_page,
+                "captured anchor inside the page should scale with the page height") &&
          Expect(NearlyEqual(new_viewport_top, 2360.0f),
-                "new viewport top should preserve the same relative position inside the page");
+                "restored viewport top should preserve the same relative position inside the page");
+}
+
+bool TestZoomAnchorPreservesTopMarginGap() {
+  std::vector<pdfview::core::ViewRect> old_page_frames(1);
+  old_page_frames[0].y = 20.0f;
+  old_page_frames[0].height = 900.0f;
+
+  const pdfview::core::ViewportAnchor anchor =
+      pdfview::core::capture_viewport_anchor(old_page_frames, 0.0f);
+
+  std::vector<pdfview::core::ViewRect> new_page_frames(1);
+  new_page_frames[0].y = 20.0f;
+  new_page_frames[0].height = 400.0f;
+
+  const float new_viewport_top =
+      pdfview::core::restore_viewport_anchor(anchor, new_page_frames, 300.0f, 3000.0f);
+  return Expect(!anchor.offset_scales_with_page,
+                "captured anchor above the page should preserve an absolute gap") &&
+         Expect(NearlyEqual(anchor.offset_y, -20.0f),
+                "captured top margin gap should keep the absolute offset") &&
+         Expect(NearlyEqual(new_viewport_top, 0.0f),
+                "restored viewport top should preserve the original top margin gap");
 }
 
 }  // namespace
@@ -345,6 +339,9 @@ int main() {
     return 1;
   }
   if (!TestZoomAnchorRatioPreservesViewportTopOffset()) {
+    return 1;
+  }
+  if (!TestZoomAnchorPreservesTopMarginGap()) {
     return 1;
   }
   return 0;

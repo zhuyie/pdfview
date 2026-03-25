@@ -44,6 +44,13 @@ struct PageCachePlan {
   PageIndexRange keep_range;
 };
 
+struct ViewportAnchor {
+  int page_index = 0;
+  float offset_y = 0.0f;
+  float page_height = 0.0f;
+  bool offset_scales_with_page = false;
+};
+
 PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& page_sizes,
                                                 const PageLayoutConfig& config);
 
@@ -64,6 +71,15 @@ PageCachePlan compute_page_cache_plan(const std::vector<ViewRect>& page_frames,
 int find_nearest_page_to_viewport_center(const std::vector<ViewRect>& page_frames,
                                          float viewport_y,
                                          float viewport_height);
+
+int find_page_at_viewport_top(const std::vector<ViewRect>& page_frames, float viewport_top_y);
+
+ViewportAnchor capture_viewport_anchor(const std::vector<ViewRect>& page_frames, float viewport_top_y);
+
+float restore_viewport_anchor(const ViewportAnchor& anchor,
+                              const std::vector<ViewRect>& page_frames,
+                              float viewport_height,
+                              float document_height);
 
 }  // namespace core
 }  // namespace pdfview

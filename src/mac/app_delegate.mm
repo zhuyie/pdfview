@@ -16,38 +16,6 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
 }
 
-int FindPageAtViewportTop(const std::vector<pdfview::core::ViewRect>& pageFrames, CGFloat topY) {
-  if (pageFrames.empty()) {
-    return 0;
-  }
-
-  for (int pageIndex = 0; pageIndex < static_cast<int>(pageFrames.size()); ++pageIndex) {
-    const pdfview::core::ViewRect& frame = pageFrames[pageIndex];
-    if (topY >= frame.y && topY < frame.y + frame.height) {
-      return pageIndex;
-    }
-  }
-
-  int nearestPageIndex = 0;
-  CGFloat nearestDistance = 0.0;
-  for (int pageIndex = 0; pageIndex < static_cast<int>(pageFrames.size()); ++pageIndex) {
-    const pdfview::core::ViewRect& frame = pageFrames[pageIndex];
-    CGFloat distance = 0.0;
-    if (topY < frame.y) {
-      distance = frame.y - topY;
-    } else {
-      distance = topY - (frame.y + frame.height);
-    }
-
-    if (pageIndex == 0 || distance < nearestDistance) {
-      nearestPageIndex = pageIndex;
-      nearestDistance = distance;
-    }
-  }
-
-  return nearestPageIndex;
-}
-
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
              std::chrono::steady_clock::now() - start)
@@ -650,19 +618,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   const NSRect visibleBounds = [[context->scrollView_ contentView] bounds];
   const CGFloat viewportHeight = visibleBounds.size.height;
   const std::vector<pdfview::core::ViewRect>& oldPageFrames = context->viewModel_.page_frames();
-  const int anchorPageIndex = FindPageAtViewportTop(oldPageFrames, visibleBounds.origin.y);
-  pdfview::core::ViewRect oldPageRect;
-  if (anchorPageIndex >= 0 && anchorPageIndex < static_cast<int>(oldPageFrames.size())) {
-    oldPageRect = oldPageFrames[anchorPageIndex];
-  }
-  CGFloat anchorOffsetY = 0.0;
-  BOOL anchorOffsetScalesWithPage = NO;
-  if (oldPageRect.height > 0.0f) {
-    anchorOffsetY = visibleBounds.origin.y - oldPageRect.y;
-    anchorOffsetScalesWithPage =
-        visibleBounds.origin.y >= oldPageRect.y &&
-        visibleBounds.origin.y < oldPageRect.y + oldPageRect.height;
-  }
+  const pdfview::core::ViewportAnchor anchor =
+      pdfview::core::capture_viewport_anchor(oldPageFrames, visibleBounds.origin.y);
+  const int anchorPageIndex = anchor.page_index;
 
   updateMode(context);
   if (invalidateRenderedPages) {
@@ -680,15 +638,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
   if (newPageRect.height > 0.0f) {
     NSClipView* clipView = [context->scrollView_ contentView];
-    CGFloat targetOriginY = newPageRect.y + anchorOffsetY;
-    if (anchorOffsetScalesWithPage && oldPageRect.height > 0.0f) {
-      targetOriginY =
-          newPageRect.y + (anchorOffsetY / oldPageRect.height) * newPageRect.height;
-    }
-    const CGFloat maxOriginY =
-        std::max<CGFloat>(0.0,
-                          context->viewModel_.layout_result().document_height - viewportHeight);
-    targetOriginY = std::max<CGFloat>(0.0, std::min(targetOriginY, maxOriginY));
+    const CGFloat targetOriginY = pdfview::core::restore_viewport_anchor(
+        anchor,
+        pageFrames,
+        viewportHeight,
+        context->viewModel_.layout_result().document_height);
     [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
     [context->scrollView_ reflectScrolledClipView:clipView];
     [context setScrollOrigin:[clipView bounds].origin];

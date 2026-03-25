@@ -154,5 +154,80 @@ int find_nearest_page_to_viewport_center(const std::vector<ViewRect>& page_frame
   return nearest_page;
 }
 
+int find_page_at_viewport_top(const std::vector<ViewRect>& page_frames, float viewport_top_y) {
+  if (page_frames.empty()) {
+    return 0;
+  }
+
+  for (int page_index = 0; page_index < static_cast<int>(page_frames.size()); ++page_index) {
+    const ViewRect& frame = page_frames[page_index];
+    if (viewport_top_y >= frame.y && viewport_top_y < frame.y + frame.height) {
+      return page_index;
+    }
+  }
+
+  int nearest_page_index = 0;
+  float nearest_distance = 0.0f;
+  for (int page_index = 0; page_index < static_cast<int>(page_frames.size()); ++page_index) {
+    const ViewRect& frame = page_frames[page_index];
+    float distance = 0.0f;
+    if (viewport_top_y < frame.y) {
+      distance = frame.y - viewport_top_y;
+    } else {
+      distance = viewport_top_y - (frame.y + frame.height);
+    }
+
+    if (page_index == 0 || distance < nearest_distance) {
+      nearest_page_index = page_index;
+      nearest_distance = distance;
+    }
+  }
+
+  return nearest_page_index;
+}
+
+ViewportAnchor capture_viewport_anchor(const std::vector<ViewRect>& page_frames, float viewport_top_y) {
+  ViewportAnchor anchor;
+  if (page_frames.empty()) {
+    return anchor;
+  }
+
+  anchor.page_index = find_page_at_viewport_top(page_frames, viewport_top_y);
+  if (anchor.page_index < 0 || anchor.page_index >= static_cast<int>(page_frames.size())) {
+    anchor.page_index = 0;
+    return anchor;
+  }
+
+  const ViewRect& frame = page_frames[anchor.page_index];
+  anchor.offset_y = viewport_top_y - frame.y;
+  anchor.page_height = frame.height;
+  anchor.offset_scales_with_page =
+      viewport_top_y >= frame.y && viewport_top_y < frame.y + frame.height;
+  return anchor;
+}
+
+float restore_viewport_anchor(const ViewportAnchor& anchor,
+                              const std::vector<ViewRect>& page_frames,
+                              float viewport_height,
+                              float document_height) {
+  if (page_frames.empty()) {
+    return 0.0f;
+  }
+
+  int page_index = anchor.page_index;
+  if (page_index < 0 || page_index >= static_cast<int>(page_frames.size())) {
+    page_index = 0;
+  }
+
+  const ViewRect& frame = page_frames[page_index];
+  float target_viewport_top_y = frame.y + anchor.offset_y;
+  if (anchor.offset_scales_with_page && anchor.page_height > 0.0f) {
+    target_viewport_top_y = frame.y + (anchor.offset_y / anchor.page_height) * frame.height;
+  }
+
+  const float max_viewport_top_y = std::max(0.0f, document_height - viewport_height);
+  return std::max(0.0f, std::min(target_viewport_top_y, max_viewport_top_y));
+}
+
 }  // namespace core
 }  // namespace pdfview
