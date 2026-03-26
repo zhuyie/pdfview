@@ -19,12 +19,14 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
 
 @implementation PDFSelectablePageImageView {
   NSMutableArray<NSValue*>* selectionRects_;
+  BOOL suppressNextMouseUp_;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
   self = [super initWithFrame:frameRect];
   if (self != nil) {
     selectionRects_ = [[NSMutableArray alloc] init];
+    suppressNextMouseUp_ = NO;
   }
   return self;
 }
@@ -48,21 +50,30 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
     return;
   }
 
-  [[NSColor colorWithCalibratedRed:0.24 green:0.54 blue:0.98 alpha:0.26] setFill];
+  NSColor* fillColor = [NSColor colorWithCalibratedRed:0.24 green:0.54 blue:0.98 alpha:0.28];
   for (NSValue* rectValue in selectionRects_) {
     const NSRect rect = [rectValue rectValue];
     if (!NSIntersectsRect(rect, dirtyRect)) {
       continue;
     }
-    [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:2.0 yRadius:2.0] fill];
+    NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:rect xRadius:2.0 yRadius:2.0];
+    [fillColor setFill];
+    [path fill];
   }
 }
 
 - (void)mouseDown:(NSEvent*)event {
   if (self.selectionDelegate != nil) {
+    const NSPoint location = [self convertPoint:[event locationInWindow] fromView:nil];
+    if ([event clickCount] >= 2) {
+      suppressNextMouseUp_ = YES;
+      [self.selectionDelegate pageViewHostDidDoubleClickTextAtPageIndex:self.pageIndex
+                                                               location:location];
+      return;
+    }
+    suppressNextMouseUp_ = NO;
     [self.selectionDelegate pageViewHostDidBeginTextSelectionAtPageIndex:self.pageIndex
-                                                                location:[self convertPoint:[event locationInWindow]
-                                                                                     fromView:nil]];
+                                                                location:location];
   }
 }
 
@@ -75,6 +86,11 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
 }
 
 - (void)mouseUp:(NSEvent*)event {
+  if (suppressNextMouseUp_) {
+    suppressNextMouseUp_ = NO;
+    return;
+  }
+
   if (self.selectionDelegate != nil) {
     [self.selectionDelegate pageViewHostDidEndTextSelectionAtPageIndex:self.pageIndex
                                                               location:[self convertPoint:[event locationInWindow]

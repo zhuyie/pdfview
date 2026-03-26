@@ -58,6 +58,7 @@ class Document {
   virtual PageTextSelection text_selection_for_range(int page_index,
                                                      int start_index,
                                                      int count) const = 0;
+  virtual PageTextSelection word_selection_at_index(int page_index, int char_index) const = 0;
 };
 
 using DocumentPtr = std::shared_ptr<Document>;

@@ -52,6 +52,10 @@ class FakeDocument : public pdfview::core::Document {
     return pdfview::core::PageTextSelection();
   }
 
+  pdfview::core::PageTextSelection word_selection_at_index(int, int) const override {
+    return pdfview::core::PageTextSelection();
+  }
+
  private:
   std::vector<pdfview::core::PageSize> page_sizes_;
 };
@@ -279,6 +283,117 @@ bool TestPageTextRectsToPageViewRects() {
          Expect(NearlyEqual(view_rects[0].y, 40.0f), "converted text rect y is incorrect") &&
          Expect(NearlyEqual(view_rects[0].width, 80.0f), "converted text rect width is incorrect") &&
          Expect(NearlyEqual(view_rects[0].height, 40.0f), "converted text rect height is incorrect");
+}
+
+bool TestWordCharRangeFromText() {
+  std::vector<unsigned int> codepoints;
+  codepoints.push_back('a');
+  codepoints.push_back('l');
+  codepoints.push_back('p');
+  codepoints.push_back('h');
+  codepoints.push_back('a');
+  codepoints.push_back(' ');
+  codepoints.push_back('b');
+  codepoints.push_back('e');
+  codepoints.push_back('t');
+  codepoints.push_back('a');
+
+  const pdfview::core::TextCharRange alpha =
+      pdfview::core::word_char_range_from_text(codepoints, 2);
+  const pdfview::core::TextCharRange beta =
+      pdfview::core::word_char_range_from_text(codepoints, 7);
+  const pdfview::core::TextCharRange gap =
+      pdfview::core::word_char_range_from_text(codepoints, 5);
+  std::vector<unsigned int> symbol_codepoints;
+  symbol_codepoints.push_back('$');
+  symbol_codepoints.push_back('+');
+  symbol_codepoints.push_back('+');
+  symbol_codepoints.push_back(' ');
+  symbol_codepoints.push_back('=');
+  const pdfview::core::TextCharRange symbols =
+      pdfview::core::word_char_range_from_text(symbol_codepoints, 1);
+  const pdfview::core::TextCharRange equals =
+      pdfview::core::word_char_range_from_text(symbol_codepoints, 4);
+  std::vector<unsigned int> cjk_codepoints;
+  cjk_codepoints.push_back(0x4F60);
+  cjk_codepoints.push_back(0x597D);
+  cjk_codepoints.push_back(0xFF0C);
+  cjk_codepoints.push_back(0x4E16);
+  cjk_codepoints.push_back(0x754C);
+  const pdfview::core::TextCharRange cjk =
+      pdfview::core::word_char_range_from_text(cjk_codepoints, 1);
+  const pdfview::core::TextCharRange cjk_punctuation =
+      pdfview::core::word_char_range_from_text(cjk_codepoints, 2);
+  const pdfview::core::TextCharRange cjk_after_punctuation =
+      pdfview::core::word_char_range_from_text(cjk_codepoints, 3);
+  std::vector<unsigned int> adjacent_cjk_punctuation;
+  adjacent_cjk_punctuation.push_back(0xFF09);
+  adjacent_cjk_punctuation.push_back(0xFF1A);
+  const pdfview::core::TextCharRange adjacent_cjk_punctuation_range =
+      pdfview::core::word_char_range_from_text(adjacent_cjk_punctuation, 0);
+
+  return Expect(alpha.start_index == 0 && alpha.count == 5,
+                "word range should expand to the full leading word") &&
+         Expect(beta.start_index == 6 && beta.count == 4,
+                "word range should expand to the full trailing word") &&
+         Expect(gap.empty(), "word range should stay empty on whitespace") &&
+         Expect(symbols.start_index == 0 && symbols.count == 3,
+                "ASCII punctuation should expand across adjacent symbol runs") &&
+         Expect(equals.start_index == 4 && equals.count == 1,
+                "standalone ASCII symbols should still be selectable") &&
+         Expect(cjk.start_index == 0 && cjk.count == 2,
+                "CJK text should expand until punctuation boundaries") &&
+         Expect(cjk_punctuation.start_index == 2 && cjk_punctuation.count == 1,
+                "CJK punctuation should be selectable as its own token") &&
+         Expect(adjacent_cjk_punctuation_range.start_index == 0 &&
+                    adjacent_cjk_punctuation_range.count == 1,
+                "adjacent CJK punctuation marks should not merge into one selection") &&
+         Expect(cjk_after_punctuation.start_index == 3 && cjk_after_punctuation.count == 2,
+                "CJK punctuation should break non-ASCII word expansion");
+}
+
+bool TestThinTextRectsStayVisible() {
+  pdfview::core::PageSize page_size;
+  page_size.width = 100.0f;
+  page_size.height = 200.0f;
+
+  pdfview::core::ViewRect page_frame;
+  page_frame.width = 100.0f;
+  page_frame.height = 200.0f;
+
+  std::vector<pdfview::core::PageTextRect> text_rects(1);
+  text_rects[0].left = 10.0f;
+  text_rects[0].right = 11.0f;
+  text_rects[0].top = 180.0f;
+  text_rects[0].bottom = 160.0f;
+
+  const std::vector<pdfview::core::ViewRect> view_rects =
+      pdfview::core::page_text_rects_to_page_view_rects(text_rects, page_size, page_frame);
+
+  return Expect(view_rects.size() == 1, "thin text rect conversion should keep valid rects") &&
+         Expect(NearlyEqual(view_rects[0].width, 5.0f), "thin text rects should get a minimum visible width");
+}
+
+bool TestThinHorizontalTextRectsStayVisible() {
+  pdfview::core::PageSize page_size;
+  page_size.width = 100.0f;
+  page_size.height = 200.0f;
+
+  pdfview::core::ViewRect page_frame;
+  page_frame.width = 100.0f;
+  page_frame.height = 200.0f;
+
+  std::vector<pdfview::core::PageTextRect> text_rects(1);
+  text_rects[0].left = 10.0f;
+  text_rects[0].right = 20.0f;
+  text_rects[0].top = 180.0f;
+  text_rects[0].bottom = 179.0f;
+
+  const std::vector<pdfview::core::ViewRect> view_rects =
+      pdfview::core::page_text_rects_to_page_view_rects(text_rects, page_size, page_frame);
+
+  return Expect(view_rects.size() == 1, "thin horizontal rect conversion should keep valid rects") &&
+         Expect(NearlyEqual(view_rects[0].height, 5.0f), "thin horizontal rects should get a minimum visible height");
 }
 
 bool TestRecentDocumentDeduplication() {
@@ -653,6 +768,15 @@ int main() {
     return 1;
   }
   if (!TestPageTextRectsToPageViewRects()) {
+    return 1;
+  }
+  if (!TestWordCharRangeFromText()) {
+    return 1;
+  }
+  if (!TestThinTextRectsStayVisible()) {
+    return 1;
+  }
+  if (!TestThinHorizontalTextRectsStayVisible()) {
     return 1;
   }
   if (!TestRecentDocumentDeduplication()) {

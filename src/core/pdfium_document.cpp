@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "core/text_selection.h"
 #include "fpdf_edit.h"
 #include "fpdf_text.h"
 #include "fpdfview.h"
@@ -73,6 +74,19 @@ std::string Utf16ToUtf8(const std::vector<unsigned short>& text) {
 
   std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
   return converter.to_bytes(utf16);
+}
+
+std::vector<unsigned int> LoadPageCodepoints(FPDF_TEXTPAGE text_page, int char_count) {
+  std::vector<unsigned int> codepoints;
+  if (char_count <= 0) {
+    return codepoints;
+  }
+
+  codepoints.resize(static_cast<size_t>(char_count), 0);
+  for (int index = 0; index < char_count; ++index) {
+    codepoints[index] = FPDFText_GetUnicode(text_page, index);
+  }
+  return codepoints;
 }
 
 class PdfiumDocument final : public Document {
@@ -232,6 +246,36 @@ class PdfiumDocument final : public Document {
     }
 
     return selection;
+  }
+
+  PageTextSelection word_selection_at_index(int page_index, int char_index) const override {
+    PageTextSelection selection;
+    if (page_index < 0 || page_index >= page_count() || char_index < 0) {
+      return selection;
+    }
+
+    ScopedPdfPage page(handle_, page_index);
+    if (page.get() == NULL) {
+      return selection;
+    }
+
+    ScopedPdfTextPage text_page(page.get());
+    if (text_page.get() == NULL) {
+      return selection;
+    }
+
+    const int char_count = FPDFText_CountChars(text_page.get());
+    if (char_count <= 0 || char_index >= char_count) {
+      return selection;
+    }
+
+    const std::vector<unsigned int> codepoints = LoadPageCodepoints(text_page.get(), char_count);
+    const TextCharRange range = word_char_range_from_text(codepoints, char_index);
+    if (range.empty()) {
+      return selection;
+    }
+
+    return text_selection_for_range(page_index, range.start_index, range.count);
   }
 
  private:

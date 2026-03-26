@@ -81,6 +81,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)updateTextSelectionAtPageIndex:(int)pageIndex
                               location:(NSPoint)location
                                context:(PDFTabContext*)context;
+- (void)selectWordAtPageIndex:(int)pageIndex
+                     location:(NSPoint)location
+                      context:(PDFTabContext*)context;
 @end
 
 @implementation AppDelegate {
@@ -951,6 +954,35 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                        pageRects:selection.rects];
 }
 
+- (void)selectWordAtPageIndex:(int)pageIndex
+                     location:(NSPoint)location
+                      context:(PDFTabContext*)context {
+  if (context == nil || ![self isContextActive:context]) {
+    return;
+  }
+
+  const int charIndex = [self textIndexForPageSelectionAtPageIndex:pageIndex
+                                                          location:location
+                                                           context:context];
+  if (charIndex < 0) {
+    [context clearTextSelection];
+    return;
+  }
+
+  const pdfview::core::PageTextSelection selection =
+      context->viewModel_.document()->word_selection_at_index(pageIndex, charIndex);
+  if (!selection.ok()) {
+    [context clearTextSelection];
+    return;
+  }
+
+  [context beginTextSelectionOnPageIndex:pageIndex charIndex:selection.start_index];
+  [context updateTextSelectionWithFocusCharIndex:selection.start_index + selection.count - 1
+                                            text:selection.text
+                                       pageRects:selection.rects];
+  [context endTextSelection];
+}
+
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
   PDFTabContext* context = [workspaceController_ contextForClipView:(NSClipView*)[notification object]];
   [interactionController_ handleClipViewDidScrollForContext:context
@@ -1153,6 +1185,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                                           location:location
                                                            context:context];
   [context beginTextSelectionOnPageIndex:pageIndex charIndex:charIndex];
+}
+
+- (void)pageViewHostDidDoubleClickTextAtPageIndex:(int)pageIndex location:(NSPoint)location {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  [interactionController_ cancelInteractiveRendering];
+  [self selectWordAtPageIndex:pageIndex location:location context:context];
 }
 
 - (void)pageViewHostDidUpdateTextSelectionAtPageIndex:(int)pageIndex location:(NSPoint)location {

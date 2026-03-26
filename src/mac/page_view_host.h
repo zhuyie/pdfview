@@ -10,6 +10,8 @@
 
 - (void)pageViewHostDidBeginTextSelectionAtPageIndex:(int)pageIndex
                                             location:(NSPoint)location;
+- (void)pageViewHostDidDoubleClickTextAtPageIndex:(int)pageIndex
+                                         location:(NSPoint)location;
 - (void)pageViewHostDidUpdateTextSelectionAtPageIndex:(int)pageIndex
                                              location:(NSPoint)location;
 - (void)pageViewHostDidEndTextSelectionAtPageIndex:(int)pageIndex
