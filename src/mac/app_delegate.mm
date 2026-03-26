@@ -7,6 +7,7 @@
 
 #include "core/profiling.h"
 #include "core/document.h"
+#include "mac/chrome_metrics.h"
 #include "mac/document_drop_view.h"
 #include "mac/document_workspace_controller.h"
 #include "mac/page_indicator_view.h"
@@ -125,7 +126,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [NSWindow setAllowsAutomaticWindowTabbing:NO];
   }
 
-  NSRect frame = NSMakeRect(0, 0, 1080, 800);
+  NSRect frame = PDFViewInitialWindowFrame();
   window_ = [[NSWindow alloc] initWithContentRect:frame
                                         styleMask:NSWindowStyleMaskTitled |
                                                   NSWindowStyleMaskClosable |
@@ -277,7 +278,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)installTabStripInView:(NSView*)contentView {
-  tabBarView_ = [[PDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, 100, 34) delegate:self];
+  tabBarView_ =
+      [[PDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, 100, PDFTabBarHeight(1))
+                                   delegate:self];
   [contentView addSubview:tabBarView_];
 
   contentHostView_ = [[PDFDocumentDropView alloc] initWithFrame:[contentView bounds] delegate:self];
@@ -289,7 +292,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)installToolbarStripInView:(NSView*)contentView {
-  toolbarStrip_ = [[PDFToolbarView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)
+  toolbarStrip_ = [[PDFToolbarView alloc] initWithFrame:NSMakeRect(0, 0, 100, PDFToolbarHeight())
                                                delegate:self];
   [contentView addSubview:toolbarStrip_];
 }
@@ -307,8 +310,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   NSView* contentView = [window_ contentView];
   const NSRect contentBounds = [contentView bounds];
-  const CGFloat tabBarHeight = [workspaceController_ tabCount] > 0 ? 34.0f : 0.0f;
-  const CGFloat toolbarHeight = 32.0f;
+  const PDFChromeLayoutFrames layoutFrames =
+      PDFComputeChromeLayoutFrames(contentBounds, [workspaceController_ tabCount]);
   PDFTabContext* context = [workspaceController_ activeContext];
   NSArray<PDFTabContext*>* tabContexts = [workspaceController_ tabContexts];
   NSMutableArray<NSString*>* tabTitles = [[NSMutableArray alloc] initWithCapacity:[tabContexts count]];
@@ -321,15 +324,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     }
   }
   [tabBarView_ setHidden:[workspaceController_ tabCount] == 0];
-  [tabBarView_ setFrame:NSMakeRect(0,
-                                   contentBounds.size.height - tabBarHeight,
-                                   contentBounds.size.width,
-                                   tabBarHeight)];
+  [tabBarView_ setFrame:layoutFrames.tab_bar_frame];
   [tabBarView_ setTabTitles:tabTitles selectedIndex:selectedIndex];
 
   if (context == nil) {
     [toolbarStrip_ setHidden:YES];
-    [contentHostView_ setFrame:NSMakeRect(0, 0, contentBounds.size.width, contentBounds.size.height)];
+    [contentHostView_ setFrame:layoutFrames.content_frame];
     [startupView_ setHidden:NO];
     [startupView_ setFrame:[contentHostView_ bounds]];
     [startupView_ setRecentDocumentPaths:[recentDocumentsController_ recentDocumentPaths]];
@@ -338,24 +338,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [toolbarStrip_ setHidden:NO];
   [startupView_ setHidden:YES];
-  const NSRect contentRect = NSMakeRect(0,
-                                        0,
-                                        contentBounds.size.width,
-                                        std::max(contentBounds.size.height - tabBarHeight, 0.0));
-  [contentHostView_ setFrame:contentRect];
-  [context->containerView_ setFrame:contentRect];
+  [contentHostView_ setFrame:layoutFrames.content_frame];
+  [context->containerView_ setFrame:layoutFrames.content_frame];
   [toolbarStrip_ removeFromSuperview];
   [context->containerView_ addSubview:toolbarStrip_];
-  [toolbarStrip_ setFrame:NSMakeRect(0,
-                                     contentRect.size.height - toolbarHeight,
-                                     contentRect.size.width,
-                                     toolbarHeight)];
-
-  const NSRect documentFrame = NSMakeRect(0,
-                                          0,
-                                          contentRect.size.width,
-                                          std::max(contentRect.size.height - toolbarHeight, 0.0));
-  [context->scrollView_ setFrame:documentFrame];
+  [toolbarStrip_ setFrame:layoutFrames.toolbar_frame];
+  [context->scrollView_ setFrame:layoutFrames.document_frame];
 }
 
 - (void)updateToolbarForActiveTab {
@@ -628,7 +616,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     interactiveRenderTimer_ = nil;
   }
   interactiveRenderTimer_ =
-      [NSTimer scheduledTimerWithTimeInterval:0.12
+      [NSTimer scheduledTimerWithTimeInterval:PDFInteractiveRenderDebounceInterval()
                                        target:self
                                      selector:@selector(endInteractiveRendering:)
                                      userInfo:nil
@@ -1075,21 +1063,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   (void)notification;
   [self layoutChrome];
   NSArray<PDFTabContext*>* tabContexts = [workspaceController_ tabContexts];
+  NSView* contentView = [window_ contentView];
+  const PDFChromeLayoutFrames layoutFrames =
+      PDFComputeChromeLayoutFrames([contentView bounds], [workspaceController_ tabCount]);
   for (PDFTabContext* context in tabContexts) {
     if (context != [workspaceController_ activeContext]) {
-      NSView* contentView = [window_ contentView];
-      const NSRect contentBounds = [contentView bounds];
-      const CGFloat tabBarHeight = [workspaceController_ tabCount] > 0 ? 34.0f : 0.0f;
-      const CGFloat toolbarHeight = 32.0f;
-      const NSRect contentRect = NSMakeRect(0,
-                                            0,
-                                            contentBounds.size.width,
-                                            std::max(contentBounds.size.height - tabBarHeight, 0.0));
-      [context->containerView_ setFrame:contentRect];
-      [context->scrollView_ setFrame:NSMakeRect(0,
-                                                0,
-                                                contentRect.size.width,
-                                                std::max(contentRect.size.height - toolbarHeight, 0.0))];
+      [context->containerView_ setFrame:layoutFrames.content_frame];
+      [context->scrollView_ setFrame:layoutFrames.document_frame];
     }
     [self renderTabContext:context];
     if (context->viewModel_.view_state().scale_mode != pdfview::core::ScaleMode::Manual) {

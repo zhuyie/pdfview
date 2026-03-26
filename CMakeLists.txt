@@ -97,6 +97,7 @@ if(APPLE)
     add_executable(pdfview_mac MACOSX_BUNDLE
         "${PDFVIEW_MAC_ICON}"
         src/mac/app_delegate.mm
+        src/mac/chrome_metrics.mm
         src/mac/document_drop_view.mm
         src/mac/document_workspace_controller.mm
         src/mac/drag_drop_utils.mm
