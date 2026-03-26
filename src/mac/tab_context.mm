@@ -229,4 +229,15 @@ namespace {
   [pageViewHost_ setSelectionRects:selectionRects atIndex:textSelection_.pageIndex];
 }
 
+- (BOOL)hasSelectedText {
+  return !textSelection_.text.empty();
+}
+
+- (NSString*)selectedText {
+  if (textSelection_.text.empty()) {
+    return @"";
+  }
+  return [NSString stringWithUTF8String:textSelection_.text.c_str()];
+}
+
 @end

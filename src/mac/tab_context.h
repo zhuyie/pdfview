@@ -76,5 +76,7 @@ struct TextSelectionState {
 - (void)endTextSelection;
 - (void)clearTextSelection;
 - (void)syncTextSelectionOverlay;
+- (BOOL)hasSelectedText;
+- (NSString*)selectedText;
 
 @end

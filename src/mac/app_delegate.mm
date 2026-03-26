@@ -70,6 +70,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
 - (IBAction)openDocument:(id)sender;
+- (IBAction)copy:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
@@ -183,6 +184,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [closeTabItem setTarget:self];
   [fileMenu addItem:closeTabItem];
   [fileMenuItem setSubmenu:fileMenu];
+
+  NSMenuItem* editMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:editMenuItem];
+  NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+  NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                    action:@selector(copy:)
+                                             keyEquivalent:@"c"];
+  [copyItem setTarget:self];
+  [editMenu addItem:copyItem];
+  [editMenuItem setSubmenu:editMenu];
 
   NSMenuItem* viewMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
   [mainMenu addItem:viewMenuItem];
@@ -463,6 +474,18 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   for (NSURL* url in [panel URLs]) {
     [self openDocumentAtPath:[[url path] UTF8String] makeActive:YES];
   }
+}
+
+- (IBAction)copy:(id)sender {
+  (void)sender;
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![context hasSelectedText]) {
+    return;
+  }
+
+  NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+  [pasteboard clearContents];
+  [pasteboard setString:[context selectedText] forType:NSPasteboardTypeString];
 }
 
 - (void)startupViewDidRequestOpenDocument {
@@ -1093,6 +1116,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       action == @selector(goToPreviousPage) ||
       action == @selector(closeCurrentTab:)) {
     return hasActiveDocument;
+  }
+
+  if (action == @selector(copy:)) {
+    PDFTabContext* context = [workspaceController_ activeContext];
+    return context != nil && [context hasSelectedText];
   }
 
   if (action == @selector(clearRecentDocuments:)) {
