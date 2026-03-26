@@ -8,8 +8,8 @@
 #include "core/profiling.h"
 #include "core/document.h"
 #include "core/document_paths.h"
-#include "core/recent_documents.h"
 #include "mac/page_indicator_view.h"
+#include "mac/recent_documents_controller.h"
 #include "mac/render_coordinator.h"
 #include "mac/startup_view.h"
 #include "mac/tab_strip_view.h"
@@ -33,9 +33,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFZoomToolbarViewDelegate>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFZoomToolbarViewDelegate, PDFRecentDocumentsControllerDelegate>
 - (void)installMainMenu;
-- (void)rebuildOpenRecentMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
 - (void)installToolbarStripInView:(NSView*)contentView;
@@ -82,7 +81,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)closeTabContext:(PDFTabContext*)context;
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
 - (IBAction)openDocument:(id)sender;
-- (IBAction)openRecentDocument:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
@@ -96,8 +94,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFStartupView* startupView_;
   PDFZoomToolbarView* toolbarStrip_;
   PDFPageIndicatorView* pageIndicatorView_;
-  NSMenu* openRecentMenu_;
-  std::vector<std::string> recentDocumentPaths_;
+  PDFRecentDocumentsController* recentDocumentsController_;
   NSMutableArray* tabContexts_;
   PDFTabContext* selectedTabContext_;
   PDFRenderCoordinator* renderCoordinator_;
@@ -116,9 +113,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     argc_ = argc;
     argv_ = argv;
     keyMonitor_ = nil;
-    openRecentMenu_ = nil;
     selectedTabContext_ = nil;
-    recentDocumentPaths_ = pdfview::core::load_recent_documents();
+    recentDocumentsController_ = [[PDFRecentDocumentsController alloc] initWithDelegate:self];
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     pageIndicatorTimer_ = nil;
@@ -188,10 +184,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   NSMenuItem* openRecentItem =
       [[NSMenuItem alloc] initWithTitle:@"Open Recent" action:nil keyEquivalent:@""];
-  openRecentMenu_ = [[NSMenu alloc] initWithTitle:@"Open Recent"];
-  [openRecentItem setSubmenu:openRecentMenu_];
+  [openRecentItem setSubmenu:[recentDocumentsController_ menu]];
   [fileMenu addItem:openRecentItem];
-  [self rebuildOpenRecentMenu];
 
   NSMenuItem* closeTabItem = [[NSMenuItem alloc] initWithTitle:@"Close Tab"
                                                         action:@selector(closeCurrentTab:)
@@ -276,45 +270,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [NSApp setMainMenu:mainMenu];
 }
 
-- (void)rebuildOpenRecentMenu {
-  if (openRecentMenu_ == nil) {
-    return;
-  }
-
-  [openRecentMenu_ removeAllItems];
-
-  if (recentDocumentPaths_.empty()) {
-    NSMenuItem* emptyItem =
-        [[NSMenuItem alloc] initWithTitle:@"No Recent Documents" action:nil keyEquivalent:@""];
-    [emptyItem setEnabled:NO];
-    [openRecentMenu_ addItem:emptyItem];
-    return;
-  }
-
-  for (size_t index = 0; index < recentDocumentPaths_.size(); ++index) {
-    NSString* path = [NSString stringWithUTF8String:recentDocumentPaths_[index].c_str()];
-    if (path == nil || [path length] == 0) {
-      continue;
-    }
-    NSMenuItem* item =
-        [[NSMenuItem alloc] initWithTitle:[path lastPathComponent]
-                                   action:@selector(openRecentDocument:)
-                            keyEquivalent:@""];
-    [item setTarget:self];
-    [item setRepresentedObject:path];
-    [item setToolTip:path];
-    [openRecentMenu_ addItem:item];
-  }
-
-  [openRecentMenu_ addItem:[NSMenuItem separatorItem]];
-  NSMenuItem* clearItem =
-      [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
-                                 action:@selector(clearRecentDocuments:)
-                          keyEquivalent:@""];
-  [clearItem setTarget:self];
-  [openRecentMenu_ addItem:clearItem];
-}
-
 - (void)installApplicationIcon {
   NSBundle* bundle = [NSBundle mainBundle];
   NSString* iconPath = [bundle pathForResource:@"pdfview" ofType:@"icns"];
@@ -348,7 +303,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (void)installStartupViewInHost:(NSView*)hostView {
   startupView_ = [[PDFStartupView alloc] initWithFrame:[hostView bounds] delegate:self];
-  [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
+  [startupView_ setRecentDocumentPaths:[recentDocumentsController_ recentDocumentPaths]];
   [hostView addSubview:startupView_];
 }
 
@@ -383,7 +338,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     [contentHostView_ setFrame:NSMakeRect(0, 0, contentBounds.size.width, contentBounds.size.height)];
     [startupView_ setHidden:NO];
     [startupView_ setFrame:[contentHostView_ bounds]];
-    [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
+    [startupView_ setRecentDocumentPaths:[recentDocumentsController_ recentDocumentPaths]];
     return;
   }
 
@@ -484,10 +439,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       [[PDFTabContext alloc] initWithDocument:result.document
                                          path:path
                                         frame:NSMakeRect(0, 0, 100, 100)];
-  recentDocumentPaths_ = pdfview::core::note_recent_document(recentDocumentPaths_, path);
-  pdfview::core::save_recent_documents(recentDocumentPaths_);
-  [self rebuildOpenRecentMenu];
-  [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
+  [recentDocumentsController_ noteOpenedDocumentPath:path];
+  [startupView_ setRecentDocumentPaths:[recentDocumentsController_ recentDocumentPaths]];
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
@@ -524,29 +477,17 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 }
 
-- (IBAction)openRecentDocument:(id)sender {
-  if (![sender isKindOfClass:[NSMenuItem class]]) {
-    return;
-  }
-
-  NSString* path = [(NSMenuItem*)sender representedObject];
-  if (path == nil || [path length] == 0) {
-    return;
-  }
-
-  [self openDocumentAtPath:[path UTF8String] makeActive:YES];
-}
-
 - (void)startupViewDidRequestOpenDocument {
   [self openDocument:nil];
 }
 
 - (void)startupViewDidRequestOpenRecentDocumentAtIndex:(NSInteger)index {
-  if (index < 0 || index >= static_cast<NSInteger>(recentDocumentPaths_.size())) {
+  const std::vector<std::string>& recentDocumentPaths = [recentDocumentsController_ recentDocumentPaths];
+  if (index < 0 || index >= static_cast<NSInteger>(recentDocumentPaths.size())) {
     return;
   }
 
-  [self openDocumentAtPath:recentDocumentPaths_[index] makeActive:YES];
+  [self openDocumentAtPath:recentDocumentPaths[index] makeActive:YES];
 }
 
 - (void)startupViewDidRequestClearRecents {
@@ -594,12 +535,18 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self applyZoomString:zoomString];
 }
 
+- (void)recentDocumentsControllerDidRequestOpenDocumentAtPath:(NSString*)path {
+  if (path == nil || [path length] == 0) {
+    return;
+  }
+
+  [self openDocumentAtPath:[path UTF8String] makeActive:YES];
+}
+
 - (IBAction)clearRecentDocuments:(id)sender {
   (void)sender;
-  recentDocumentPaths_.clear();
-  pdfview::core::save_recent_documents(recentDocumentPaths_);
-  [self rebuildOpenRecentMenu];
-  [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
+  [recentDocumentsController_ clearRecentDocuments];
+  [startupView_ setRecentDocumentPaths:[recentDocumentsController_ recentDocumentPaths]];
 }
 
 - (IBAction)closeCurrentTab:(id)sender {
@@ -709,40 +656,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (BOOL)shouldReduceInteractiveScaleForContext:(PDFTabContext*)context
                                    deviceScale:(CGFloat)deviceScale {
-  if (context == nil || context != interactiveRenderContext_ || deviceScale <= 1.0) {
+  if (context == nil || context != interactiveRenderContext_) {
     return NO;
   }
-
-  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
-  if (pageFrames.empty()) {
-    return NO;
-  }
-
-  const pdfview::core::ViewRect visibleRect = context->viewModel_.visible_rect();
-  const pdfview::core::PageCachePlan cachePlan =
-      context->viewModel_.page_cache_plan(visibleRect.height * 0.5f);
-  if (cachePlan.preload_range.empty()) {
-    return NO;
-  }
-
-  double totalVisiblePixels = 0.0;
-  double maxPagePixels = 0.0;
-  for (int pageIndex = cachePlan.preload_range.start;
-       pageIndex < cachePlan.preload_range.end;
-       ++pageIndex) {
-    if (pageIndex < 0 || pageIndex >= static_cast<int>(pageFrames.size())) {
-      continue;
-    }
-
-    const pdfview::core::ViewRect& frame = pageFrames[pageIndex];
-    const double pagePixels =
-        static_cast<double>(frame.width) * static_cast<double>(frame.height) *
-        static_cast<double>(deviceScale) * static_cast<double>(deviceScale);
-    totalVisiblePixels += pagePixels;
-    maxPagePixels = std::max(maxPagePixels, pagePixels);
-  }
-
-  return maxPagePixels >= 2500000.0 || totalVisiblePixels >= 5000000.0;
+  return context->viewModel_.should_reduce_interactive_scale(static_cast<float>(deviceScale));
 }
 
 - (void)beginInteractiveRenderingForContext:(PDFTabContext*)context {
@@ -1230,12 +1147,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return hasActiveDocument;
   }
 
-  if (action == @selector(openRecentDocument:)) {
-    return menuItem.representedObject != nil;
-  }
-
   if (action == @selector(clearRecentDocuments:)) {
-    return !recentDocumentPaths_.empty();
+    return ![recentDocumentsController_ recentDocumentPaths].empty();
   }
 
   return YES;

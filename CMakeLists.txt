@@ -100,6 +100,7 @@ if(APPLE)
         src/mac/main.mm
         src/mac/page_indicator_view.mm
         src/mac/page_view_host.mm
+        src/mac/recent_documents_controller.mm
         src/mac/render_coordinator.mm
         src/mac/startup_view.mm
         src/mac/tab_context.mm
