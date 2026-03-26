@@ -96,6 +96,7 @@ if(APPLE)
     add_executable(pdfview_mac MACOSX_BUNDLE
         "${PDFVIEW_MAC_ICON}"
         src/mac/app_delegate.mm
+        src/mac/document_workspace_controller.mm
         src/mac/image_bridge.mm
         src/mac/main.mm
         src/mac/page_indicator_view.mm

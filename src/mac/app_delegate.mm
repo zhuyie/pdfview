@@ -7,7 +7,7 @@
 
 #include "core/profiling.h"
 #include "core/document.h"
-#include "core/document_paths.h"
+#include "mac/document_workspace_controller.h"
 #include "mac/page_indicator_view.h"
 #include "mac/recent_documents_controller.h"
 #include "mac/render_coordinator.h"
@@ -21,10 +21,6 @@ namespace {
 constexpr float kMinimumManualScale = 0.1f;
 constexpr float kMaximumManualScale = 5.0f;
 
-NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
-  return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
-}
-
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
              std::chrono::steady_clock::now() - start)
@@ -33,7 +29,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFZoomToolbarViewDelegate, PDFRecentDocumentsControllerDelegate>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFZoomToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate>
 - (void)installMainMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
@@ -75,11 +71,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)hidePageIndicator:(NSTimer*)timer;
 - (void)ensurePageIndicatorAttachedToContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
-- (PDFTabContext*)activeTabContext;
-- (PDFTabContext*)contextForDocumentPath:(const std::string&)path;
-- (void)selectTabContext:(PDFTabContext*)context;
-- (void)closeTabContext:(PDFTabContext*)context;
-- (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
@@ -95,8 +86,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFZoomToolbarView* toolbarStrip_;
   PDFPageIndicatorView* pageIndicatorView_;
   PDFRecentDocumentsController* recentDocumentsController_;
-  NSMutableArray* tabContexts_;
-  PDFTabContext* selectedTabContext_;
+  PDFDocumentWorkspaceController* workspaceController_;
   PDFRenderCoordinator* renderCoordinator_;
   NSTimer* interactiveRenderTimer_;
   NSTimer* pageIndicatorTimer_;
@@ -113,14 +103,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     argc_ = argc;
     argv_ = argv;
     keyMonitor_ = nil;
-    selectedTabContext_ = nil;
     recentDocumentsController_ = [[PDFRecentDocumentsController alloc] initWithDelegate:self];
+    workspaceController_ = nil;
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     pageIndicatorTimer_ = nil;
     interactiveRenderContext_ = nil;
     suppressScrollTracking_ = NO;
-    tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
 }
@@ -292,6 +281,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [contentHostView_ setWantsLayer:YES];
   [[contentHostView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
   [contentView addSubview:contentHostView_ positioned:NSWindowBelow relativeTo:tabBarView_];
+  workspaceController_ = [[PDFDocumentWorkspaceController alloc] initWithHostView:contentHostView_
+                                                                          delegate:self];
   [self installStartupViewInHost:contentHostView_];
 }
 
@@ -314,19 +305,20 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   NSView* contentView = [window_ contentView];
   const NSRect contentBounds = [contentView bounds];
-  const CGFloat tabBarHeight = [tabContexts_ count] > 0 ? 34.0f : 0.0f;
+  const CGFloat tabBarHeight = [workspaceController_ tabCount] > 0 ? 34.0f : 0.0f;
   const CGFloat toolbarHeight = 32.0f;
-  PDFTabContext* context = [self activeTabContext];
-  NSMutableArray<NSString*>* tabTitles = [[NSMutableArray alloc] initWithCapacity:[tabContexts_ count]];
+  PDFTabContext* context = [workspaceController_ activeContext];
+  NSArray<PDFTabContext*>* tabContexts = [workspaceController_ tabContexts];
+  NSMutableArray<NSString*>* tabTitles = [[NSMutableArray alloc] initWithCapacity:[tabContexts count]];
   NSInteger selectedIndex = NSNotFound;
-  for (NSUInteger index = 0; index < [tabContexts_ count]; ++index) {
-    PDFTabContext* tabContext = [tabContexts_ objectAtIndex:index];
+  for (NSUInteger index = 0; index < [tabContexts count]; ++index) {
+    PDFTabContext* tabContext = [tabContexts objectAtIndex:index];
     [tabTitles addObject:[tabContext tabTitle]];
-    if (tabContext == selectedTabContext_) {
+    if (tabContext == context) {
       selectedIndex = static_cast<NSInteger>(index);
     }
   }
-  [tabBarView_ setHidden:[tabContexts_ count] == 0];
+  [tabBarView_ setHidden:[workspaceController_ tabCount] == 0];
   [tabBarView_ setFrame:NSMakeRect(0,
                                    contentBounds.size.height - tabBarHeight,
                                    contentBounds.size.width,
@@ -369,7 +361,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     [toolbarStrip_ showEmptyState];
     return;
@@ -386,7 +378,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (BOOL)applyZoomString:(NSString*)rawValue {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil || toolbarStrip_ == nil) {
     return NO;
   }
@@ -423,9 +415,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive {
-  PDFTabContext* existingContext = [self contextForDocumentPath:path];
+  PDFTabContext* existingContext = [workspaceController_ contextForDocumentPath:path];
   if (existingContext != nil) {
-    [self selectTabContext:existingContext];
+    [workspaceController_ selectContext:existingContext];
     return;
   }
 
@@ -445,14 +437,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
                                              object:[context->scrollView_ contentView]];
+  [workspaceController_ addContext:context makeActive:makeActive];
 
-  [tabContexts_ addObject:context];
-  [contentHostView_ addSubview:context->containerView_];
-  [context->containerView_ setHidden:YES];
-
-  if (makeActive || [tabContexts_ count] == 1) {
-    [self selectTabContext:context];
-  } else {
+  if (!makeActive && [workspaceController_ activeContext] != context) {
     [self layoutChrome];
     [self renderTabContext:context];
   }
@@ -495,20 +482,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)tabStripViewDidSelectTabAtIndex:(NSInteger)index {
-  if (index < 0 || index >= [tabContexts_ count]) {
-    return;
-  }
-
   [self cancelInteractiveRendering];
-  [self selectTabContext:[tabContexts_ objectAtIndex:index]];
+  [workspaceController_ selectContextAtIndex:index];
 }
 
 - (void)tabStripViewDidCloseTabAtIndex:(NSInteger)index {
-  if (index < 0 || index >= [tabContexts_ count]) {
+  NSArray<PDFTabContext*>* tabContexts = [workspaceController_ tabContexts];
+  if (index < 0 || index >= [tabContexts count]) {
     return;
   }
-
-  [self closeTabContext:[tabContexts_ objectAtIndex:index]];
+  [workspaceController_ closeContext:[tabContexts objectAtIndex:index]];
 }
 
 - (void)zoomToolbarViewDidRequestZoomOut {
@@ -543,6 +526,33 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self openDocumentAtPath:[path UTF8String] makeActive:YES];
 }
 
+- (void)workspaceControllerDidAddContext:(PDFTabContext*)context {
+  (void)context;
+  [tabBarView_ ensureSelectedTabVisibleOnNextLayout];
+}
+
+- (void)workspaceControllerWillRemoveContext:(PDFTabContext*)context {
+  [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                  name:NSViewBoundsDidChangeNotification
+                                                object:[context->scrollView_ contentView]];
+}
+
+- (void)workspaceControllerSelectionDidChange:(PDFTabContext*)context {
+  [self hidePageIndicator:nil];
+  if (context == nil) {
+    [window_ setTitle:@"PDFView"];
+    [self layoutChrome];
+    [self updateToolbarForActiveTab];
+    return;
+  }
+
+  [tabBarView_ ensureSelectedTabVisibleOnNextLayout];
+  [window_ setTitle:[NSString stringWithFormat:@"PDFView - %@", [context tabTitle]]];
+  [self layoutChrome];
+  [self renderTabContext:context];
+  [self updateToolbarForActiveTab];
+}
+
 - (IBAction)clearRecentDocuments:(id)sender {
   (void)sender;
   [recentDocumentsController_ clearRecentDocuments];
@@ -551,7 +561,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (IBAction)closeCurrentTab:(id)sender {
   (void)sender;
-  [self closeTabContext:[self activeTabContext]];
+  [workspaceController_ closeContext:[workspaceController_ activeContext]];
 }
 
 - (IBAction)showHelp:(id)sender {
@@ -563,87 +573,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [alert runModal];
 }
 
-- (PDFTabContext*)activeTabContext {
-  return selectedTabContext_;
-}
-
-- (PDFTabContext*)contextForDocumentPath:(const std::string&)path {
-  for (PDFTabContext* context in tabContexts_) {
-    if (pdfview::core::same_document_path(context->documentPath_, path)) {
-      return context;
-    }
-  }
-
-  return nil;
-}
-
-- (void)selectTabContext:(PDFTabContext*)context {
-  if (context == nil) {
-    selectedTabContext_ = nil;
-    [self hidePageIndicator:nil];
-    [window_ setTitle:@"PDFView"];
-    [self layoutChrome];
-    [self updateToolbarForActiveTab];
-    return;
-  }
-
-  selectedTabContext_ = context;
-  [tabBarView_ ensureSelectedTabVisibleOnNextLayout];
-  [self hidePageIndicator:nil];
-  for (PDFTabContext* tabContext in tabContexts_) {
-    [tabContext->containerView_ setHidden:tabContext != selectedTabContext_];
-  }
-
-  [window_ setTitle:[NSString stringWithFormat:@"PDFView - %@", [context tabTitle]]];
-  [self layoutChrome];
-  [self renderTabContext:context];
-  [self updateToolbarForActiveTab];
-}
-
-- (void)closeTabContext:(PDFTabContext*)context {
-  if (context == nil) {
-    return;
-  }
-
-  const NSUInteger closingIndex = [tabContexts_ indexOfObjectIdenticalTo:context];
-  [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                  name:NSViewBoundsDidChangeNotification
-                                                object:[context->scrollView_ contentView]];
-  [context->containerView_ removeFromSuperview];
-  [tabContexts_ removeObject:context];
-
-  if ([tabContexts_ count] == 0) {
-    selectedTabContext_ = nil;
-    [self hidePageIndicator:nil];
-    [window_ setTitle:@"PDFView"];
-    [self layoutChrome];
-    [self updateToolbarForActiveTab];
-    return;
-  }
-
-  if (selectedTabContext_ == context) {
-    const NSUInteger fallbackIndex =
-        std::min(closingIndex, [tabContexts_ count] - 1);
-    [self selectTabContext:[tabContexts_ objectAtIndex:fallbackIndex]];
-    return;
-  }
-
-  [tabBarView_ ensureSelectedTabVisibleOnNextLayout];
-  [self layoutChrome];
-  [self updateToolbarForActiveTab];
-}
-
-- (PDFTabContext*)contextForClipView:(NSClipView*)clipView {
-  for (PDFTabContext* context in tabContexts_) {
-    if ([context->scrollView_ contentView] == clipView) {
-      return context;
-    }
-  }
-  return nil;
-}
-
 - (BOOL)isContextActive:(PDFTabContext*)context {
-  return context != nil && context == [self activeTabContext];
+  return context != nil && context == [workspaceController_ activeContext];
 }
 
 - (CGFloat)effectiveDeviceScaleForContext:(PDFTabContext*)context {
@@ -810,7 +741,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)zoomIn {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     return;
   }
@@ -825,7 +756,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)zoomOut {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     return;
   }
@@ -840,7 +771,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)zoomToActualSize {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     return;
   }
@@ -854,7 +785,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)resetZoomToFitWidth {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     return;
   }
@@ -868,7 +799,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)fitZoomToPage {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     return;
   }
@@ -882,7 +813,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)goToNextPage {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil ||
       context->viewModel_.view_state().current_page + 1 >= context->viewModel_.page_count()) {
     return;
@@ -893,7 +824,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)goToPreviousPage {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil || context->viewModel_.view_state().current_page <= 0) {
     return;
   }
@@ -911,7 +842,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)scrollActiveContextByViewportDelta:(CGFloat)deltaY {
-  PDFTabContext* context = [self activeTabContext];
+  PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil) {
     return;
   }
@@ -1019,7 +950,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (suppressScrollTracking_) {
     return;
   }
-  PDFTabContext* context = [self contextForClipView:(NSClipView*)[notification object]];
+  PDFTabContext* context = [workspaceController_ contextForClipView:(NSClipView*)[notification object]];
   [self updateCurrentPageFromScrollForContext:context];
   [self showPageIndicatorForContext:context];
   [self beginInteractiveRenderingForContext:context];
@@ -1038,7 +969,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
       return event;
     }
 
-    PDFTabContext* context = [self activeTabContext];
+    PDFTabContext* context = [workspaceController_ activeContext];
     if (context == nil) {
       return event;
     }
@@ -1091,11 +1022,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)windowDidResize:(NSNotification*)notification {
   (void)notification;
   [self layoutChrome];
-  for (PDFTabContext* context in tabContexts_) {
-    if (context != [self activeTabContext]) {
+  NSArray<PDFTabContext*>* tabContexts = [workspaceController_ tabContexts];
+  for (PDFTabContext* context in tabContexts) {
+    if (context != [workspaceController_ activeContext]) {
       NSView* contentView = [window_ contentView];
       const NSRect contentBounds = [contentView bounds];
-      const CGFloat tabBarHeight = [tabContexts_ count] > 0 ? 34.0f : 0.0f;
+      const CGFloat tabBarHeight = [workspaceController_ tabCount] > 0 ? 34.0f : 0.0f;
       const CGFloat toolbarHeight = 32.0f;
       const NSRect contentRect = NSMakeRect(0,
                                             0,
@@ -1134,7 +1066,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
   SEL action = [menuItem action];
-  const BOOL hasActiveDocument = [self activeTabContext] != nil;
+  const BOOL hasActiveDocument = [workspaceController_ activeContext] != nil;
 
   if (action == @selector(zoomIn) ||
       action == @selector(zoomOut) ||
