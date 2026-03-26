@@ -8,6 +8,7 @@
 #include "core/document_paths.h"
 #include "core/page_cache.h"
 #include "core/recent_documents.h"
+#include "core/viewer_layout.h"
 #include "core/viewport.h"
 
 namespace {
@@ -47,15 +48,23 @@ class FakeDocument : public pdfview::core::Document {
 };
 
 bool TestComputeFitScale() {
+  const pdfview::core::ViewerLayoutMetrics& metrics =
+      pdfview::core::default_viewer_layout_metrics();
   std::vector<pdfview::core::PageSize> page_sizes(2);
   page_sizes[0].width = 400.0f;
   page_sizes[1].width = 600.0f;
 
-  const float scale = pdfview::core::compute_fit_scale(page_sizes, 800.0f, 48.0f, 0.25f);
-  return Expect(NearlyEqual(scale, 752.0f / 600.0f), "compute_fit_scale returned an unexpected value");
+  const float scale = pdfview::core::compute_fit_scale(page_sizes,
+                                                       800.0f,
+                                                       metrics.fit_width_horizontal_padding,
+                                                       metrics.minimum_fit_scale);
+  return Expect(NearlyEqual(scale, (800.0f - metrics.fit_width_horizontal_padding) / 600.0f),
+                "compute_fit_scale returned an unexpected value");
 }
 
 bool TestContinuousLayout() {
+  const pdfview::core::ViewerLayoutMetrics& metrics =
+      pdfview::core::default_viewer_layout_metrics();
   std::vector<pdfview::core::PageSize> page_sizes(2);
   page_sizes[0].width = 300.0f;
   page_sizes[0].height = 500.0f;
@@ -66,19 +75,21 @@ bool TestContinuousLayout() {
   config.viewport_width = 700.0f;
   config.viewport_height = 600.0f;
   config.zoom = 1.0f;
-  config.top_margin = 20.0f;
-  config.side_margin = 16.0f;
-  config.page_gap = 24.0f;
+  config.top_margin = metrics.page_gap * 0.5f;
+  config.side_margin = metrics.side_margin;
+  config.page_gap = metrics.page_gap;
 
   const pdfview::core::PageLayoutResult result =
       pdfview::core::compute_continuous_page_layout(page_sizes, config);
 
   return Expect(result.page_frames.size() == 2, "layout should create two page frames") &&
          Expect(NearlyEqual(result.page_frames[0].x, 200.0f), "first page x is incorrect") &&
-         Expect(NearlyEqual(result.page_frames[0].y, 20.0f), "first page y is incorrect") &&
+         Expect(NearlyEqual(result.page_frames[0].y, metrics.page_gap * 0.5f), "first page y is incorrect") &&
          Expect(NearlyEqual(result.page_frames[1].x, 150.0f), "second page x is incorrect") &&
-         Expect(NearlyEqual(result.page_frames[1].y, 544.0f), "second page y is incorrect") &&
-         Expect(NearlyEqual(result.document_height, 768.0f), "document height is incorrect");
+         Expect(NearlyEqual(result.page_frames[1].y, 500.0f + metrics.page_gap * 0.5f + metrics.page_gap), "second page y is incorrect") &&
+         Expect(NearlyEqual(result.document_height,
+                            500.0f + 200.0f + metrics.page_gap * 2.0f),
+                "document height is incorrect");
 }
 
 bool TestNearestPageSelection() {
@@ -265,6 +276,8 @@ bool TestSameDocumentPath() {
 }
 
 bool TestDocumentViewModel() {
+  const pdfview::core::ViewerLayoutMetrics& metrics =
+      pdfview::core::default_viewer_layout_metrics();
   std::vector<pdfview::core::PageSize> page_sizes(3);
   page_sizes[0].width = 400.0f;
   page_sizes[0].height = 400.0f;
@@ -280,7 +293,7 @@ bool TestDocumentViewModel() {
   view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::FitWidth;
   view_model.relayout();
 
-  const float expected_scale = (500.0f - 48.0f) / 400.0f;
+  const float expected_scale = (500.0f - metrics.fit_width_horizontal_padding) / 400.0f;
   const pdfview::core::ViewRect first_rect = view_model.current_page_rect();
 
   view_model.mutable_view_state()->scroll_y = 520.0f;
@@ -289,7 +302,7 @@ bool TestDocumentViewModel() {
 
   return Expect(NearlyEqual(view_model.current_logical_scale(), expected_scale), "view model fit scale is incorrect") &&
          Expect(NearlyEqual(view_model.current_render_scale(), expected_scale * 2.0f), "view model render scale is incorrect") &&
-         Expect(NearlyEqual(first_rect.y, 20.0f), "current page rect before scrolling is incorrect") &&
+         Expect(NearlyEqual(first_rect.y, metrics.page_gap * 0.5f), "current page rect before scrolling is incorrect") &&
          Expect(view_model.view_state().current_page == 1, "view model current page tracking is incorrect") &&
          Expect(!render_plan.render_requests.empty(), "view model should request visible page rendering");
 }
@@ -312,7 +325,7 @@ bool TestDocumentViewModelViewportAnchorRestore() {
   view_model.mutable_view_state()->zoom = 1.0f;
   view_model.relayout();
 
-  return Expect(NearlyEqual(view_model.restored_scroll_y_for_anchor(anchor), 400.0f),
+  return Expect(NearlyEqual(view_model.restored_scroll_y_for_anchor(anchor), 394.6667f),
                 "view model should restore the captured viewport anchor after relayout");
 }
 
@@ -335,13 +348,15 @@ bool TestDocumentViewModelScaleChangeState() {
   view_model.relayout();
 
   return Expect(state.anchor_page_index == 0, "scale change state should keep the anchored page index") &&
-         Expect(NearlyEqual(view_model.restored_scroll_y_for_scale_change(state), 400.0f),
+         Expect(NearlyEqual(view_model.restored_scroll_y_for_scale_change(state), 394.6667f),
                 "scale change state should restore the target scroll position after relayout") &&
          Expect(view_model.view_state().current_page == 0,
                 "scale change restore should keep the current page anchored to the captured page");
 }
 
 bool TestDocumentViewModelScrollYForCurrentPage() {
+  const pdfview::core::ViewerLayoutMetrics& metrics =
+      pdfview::core::default_viewer_layout_metrics();
   std::vector<pdfview::core::PageSize> page_sizes(3);
   for (int index = 0; index < 3; ++index) {
     page_sizes[index].width = 400.0f;
@@ -355,8 +370,17 @@ bool TestDocumentViewModelScrollYForCurrentPage() {
   view_model.mutable_view_state()->current_page = 2;
   view_model.relayout();
 
-  return Expect(NearlyEqual(view_model.scroll_y_for_current_page(), 972.0f),
-                "scroll target for the current page should align to the page top and clamp to the document");
+  const bool third_page_target =
+      Expect(NearlyEqual(view_model.scroll_y_for_current_page(),
+                         2.0f * ((500.0f - metrics.fit_width_horizontal_padding) + metrics.page_gap)),
+             "scroll target for later pages should align above the page by the shared edge margin");
+
+  view_model.mutable_view_state()->current_page = 0;
+  const bool first_page_target =
+      Expect(NearlyEqual(view_model.scroll_y_for_current_page(), 0.0f),
+             "first page should align to the top of the scrollable document");
+
+  return third_page_target && first_page_target;
 }
 
 bool TestDocumentViewModelViewportStepScroll() {
@@ -417,6 +441,8 @@ bool TestDocumentViewModelInteractiveScaleHeuristic() {
 }
 
 bool TestFitPageScale() {
+  const pdfview::core::ViewerLayoutMetrics& metrics =
+      pdfview::core::default_viewer_layout_metrics();
   std::vector<pdfview::core::PageSize> page_sizes(2);
   page_sizes[0].width = 400.0f;
   page_sizes[0].height = 800.0f;
@@ -429,9 +455,11 @@ bool TestFitPageScale() {
   view_model.mutable_view_state()->current_page = 0;
   view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::FitPage;
 
-  return Expect(NearlyEqual(view_model.fit_page_scale(), 252.0f / 800.0f),
+  return Expect(NearlyEqual(view_model.fit_page_scale(),
+                            (300.0f - metrics.fit_page_vertical_padding) / 800.0f),
                 "fit page scale should clamp to viewport height for tall pages") &&
-         Expect(NearlyEqual(view_model.current_logical_scale(), 252.0f / 800.0f),
+         Expect(NearlyEqual(view_model.current_logical_scale(),
+                            (300.0f - metrics.fit_page_vertical_padding) / 800.0f),
                 "current scale should use fit page mode");
 }
 

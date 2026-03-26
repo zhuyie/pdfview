@@ -6,6 +6,7 @@
 #include "core/document.h"
 #include "core/page_cache.h"
 #include "core/view_state.h"
+#include "core/viewer_layout.h"
 #include "core/viewport.h"
 
 namespace pdfview {

@@ -51,7 +51,12 @@ PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& pag
     frame.height = page_height;
     result.page_frames[index] = frame;
 
-    cursor_y += page_height + config.page_gap;
+    cursor_y += page_height;
+    if (index + 1 < page_sizes.size()) {
+      cursor_y += config.page_gap;
+    } else {
+      cursor_y += config.top_margin;
+    }
     document_width = std::max(document_width, frame.x + frame.width + config.side_margin);
     max_page_width = std::max(max_page_width, page_width);
   }

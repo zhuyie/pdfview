@@ -31,7 +31,11 @@ float DocumentViewModel::fit_width_scale() const {
     return 1.0f;
   }
 
-  return compute_fit_scale(page_sizes_, viewport_width_, 48.0f, 0.25f);
+  const ViewerLayoutMetrics& metrics = default_viewer_layout_metrics();
+  return compute_fit_scale(page_sizes_,
+                           viewport_width_,
+                           metrics.fit_width_horizontal_padding,
+                           metrics.minimum_fit_scale);
 }
 
 float DocumentViewModel::fit_page_scale() const {
@@ -49,12 +53,15 @@ float DocumentViewModel::fit_page_scale() const {
     return 1.0f;
   }
 
+  const ViewerLayoutMetrics& metrics = default_viewer_layout_metrics();
   const float fit_width = compute_fit_scale(std::vector<PageSize>(1, page_size),
                                             viewport_width_,
-                                            48.0f,
-                                            0.25f);
-  const float target_height = std::max(viewport_height_ - 48.0f, 120.0f);
-  const float fit_height = std::max(target_height / page_size.height, 0.25f);
+                                            metrics.fit_width_horizontal_padding,
+                                            metrics.minimum_fit_scale);
+  const float target_height =
+      std::max(viewport_height_ - metrics.fit_page_vertical_padding,
+               metrics.minimum_fit_dimension);
+  const float fit_height = std::max(target_height / page_size.height, metrics.minimum_fit_scale);
   return std::min(fit_width, fit_height);
 }
 
@@ -107,13 +114,14 @@ bool DocumentViewModel::should_reduce_interactive_scale(float device_scale) cons
 }
 
 void DocumentViewModel::relayout() {
+  const ViewerLayoutMetrics& metrics = default_viewer_layout_metrics();
   PageLayoutConfig layout_config;
   layout_config.viewport_width = viewport_width_;
   layout_config.viewport_height = viewport_height_;
   layout_config.zoom = current_logical_scale();
-  layout_config.top_margin = 20.0f;
-  layout_config.side_margin = 16.0f;
-  layout_config.page_gap = 24.0f;
+  layout_config.side_margin = metrics.side_margin;
+  layout_config.page_gap = metrics.page_gap;
+  layout_config.top_margin = layout_config.page_gap * 0.5f;
 
   layout_result_ = compute_continuous_page_layout(page_sizes_, layout_config);
 }
@@ -193,8 +201,12 @@ float DocumentViewModel::scroll_y_for_current_page() const {
     return view_state_.scroll_y;
   }
 
+  const float edge_padding =
+      layout_result_.page_frames.empty() ? 0.0f : layout_result_.page_frames.front().y;
+  const float target_scroll_y = rect.y - edge_padding;
+
   const float max_scroll_y = std::max(layout_result_.document_height - viewport_height_, 0.0f);
-  return std::min(std::max(rect.y, 0.0f), max_scroll_y);
+  return std::min(std::max(target_scroll_y, 0.0f), max_scroll_y);
 }
 
 std::string DocumentViewModel::page_indicator_text() const {
