@@ -106,7 +106,7 @@ if(APPLE)
         src/mac/startup_view.mm
         src/mac/tab_context.mm
         src/mac/tab_strip_view.mm
-        src/mac/zoom_toolbar_view.mm
+        src/mac/toolbar_view.mm
     )
     target_link_libraries(pdfview_mac PRIVATE pdfview_core "-framework AppKit" "-framework UniformTypeIdentifiers")
     set_target_properties(pdfview_mac PROPERTIES

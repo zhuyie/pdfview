@@ -1,4 +1,4 @@
-#import "mac/zoom_toolbar_view.h"
+#import "mac/toolbar_view.h"
 
 #include <cmath>
 
@@ -38,7 +38,7 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
 
 }  // namespace
 
-@interface PDFZoomToolbarView () <NSComboBoxDelegate, NSTextFieldDelegate>
+@interface PDFToolbarView () <NSComboBoxDelegate, NSTextFieldDelegate>
 
 - (IBAction)zoomComboBoxChanged:(id)sender;
 - (BOOL)applyPendingZoomString;
@@ -50,8 +50,8 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
 
 @end
 
-@implementation PDFZoomToolbarView {
-  id<PDFZoomToolbarViewDelegate> delegate_;
+@implementation PDFToolbarView {
+  id<PDFToolbarViewDelegate> delegate_;
   NSComboBox* zoomComboBox_;
   NSButton* zoomOutButton_;
   NSButton* zoomInButton_;
@@ -61,7 +61,7 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
   BOOL zoomComboBoxEditing_;
 }
 
-- (instancetype)initWithFrame:(NSRect)frame delegate:(id<PDFZoomToolbarViewDelegate>)delegate {
+- (instancetype)initWithFrame:(NSRect)frame delegate:(id<PDFToolbarViewDelegate>)delegate {
   self = [super initWithFrame:frame];
   if (self != nil) {
     delegate_ = delegate;
@@ -189,7 +189,7 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
   if (selectedIndex >= 0) {
     id value = [zoomComboBox_ objectValueOfSelectedItem];
     if ([value isKindOfClass:[NSString class]] && delegate_ != nil) {
-      [delegate_ zoomToolbarViewDidSubmitZoomString:(NSString*)value];
+      [delegate_ toolbarViewDidSubmitZoomString:(NSString*)value];
     }
   }
 }
@@ -230,7 +230,7 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
     return NO;
   }
 
-  [delegate_ zoomToolbarViewDidSubmitZoomString:[zoomComboBox_ stringValue]];
+  [delegate_ toolbarViewDidSubmitZoomString:[zoomComboBox_ stringValue]];
   [[self window] makeFirstResponder:nil];
   return YES;
 }
@@ -238,35 +238,35 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
 - (IBAction)zoomOut:(id)sender {
   (void)sender;
   if (delegate_ != nil) {
-    [delegate_ zoomToolbarViewDidRequestZoomOut];
+    [delegate_ toolbarViewDidRequestZoomOut];
   }
 }
 
 - (IBAction)zoomIn:(id)sender {
   (void)sender;
   if (delegate_ != nil) {
-    [delegate_ zoomToolbarViewDidRequestZoomIn];
+    [delegate_ toolbarViewDidRequestZoomIn];
   }
 }
 
 - (IBAction)zoomActual:(id)sender {
   (void)sender;
   if (delegate_ != nil) {
-    [delegate_ zoomToolbarViewDidRequestZoomActual];
+    [delegate_ toolbarViewDidRequestZoomActual];
   }
 }
 
 - (IBAction)fitWidth:(id)sender {
   (void)sender;
   if (delegate_ != nil) {
-    [delegate_ zoomToolbarViewDidRequestFitWidth];
+    [delegate_ toolbarViewDidRequestFitWidth];
   }
 }
 
 - (IBAction)fitPage:(id)sender {
   (void)sender;
   if (delegate_ != nil) {
-    [delegate_ zoomToolbarViewDidRequestFitPage];
+    [delegate_ toolbarViewDidRequestFitPage];
   }
 }
 

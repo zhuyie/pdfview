@@ -14,7 +14,7 @@
 #include "mac/startup_view.h"
 #include "mac/tab_strip_view.h"
 #include "mac/tab_context.h"
-#include "mac/zoom_toolbar_view.h"
+#include "mac/toolbar_view.h"
 
 namespace {
 
@@ -29,7 +29,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFZoomToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate>
 - (void)installMainMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
@@ -83,7 +83,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFTabStripView* tabBarView_;
   NSView* contentHostView_;
   PDFStartupView* startupView_;
-  PDFZoomToolbarView* toolbarStrip_;
+  PDFToolbarView* toolbarStrip_;
   PDFPageIndicatorView* pageIndicatorView_;
   PDFRecentDocumentsController* recentDocumentsController_;
   PDFDocumentWorkspaceController* workspaceController_;
@@ -287,8 +287,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)installToolbarStripInView:(NSView*)contentView {
-  toolbarStrip_ = [[PDFZoomToolbarView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)
-                                                   delegate:self];
+  toolbarStrip_ = [[PDFToolbarView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)
+                                               delegate:self];
   [contentView addSubview:toolbarStrip_];
 }
 
@@ -494,27 +494,27 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [workspaceController_ closeContext:[tabContexts objectAtIndex:index]];
 }
 
-- (void)zoomToolbarViewDidRequestZoomOut {
+- (void)toolbarViewDidRequestZoomOut {
   [self zoomOut];
 }
 
-- (void)zoomToolbarViewDidRequestZoomIn {
+- (void)toolbarViewDidRequestZoomIn {
   [self zoomIn];
 }
 
-- (void)zoomToolbarViewDidRequestZoomActual {
+- (void)toolbarViewDidRequestZoomActual {
   [self zoomToActualSize];
 }
 
-- (void)zoomToolbarViewDidRequestFitWidth {
+- (void)toolbarViewDidRequestFitWidth {
   [self resetZoomToFitWidth];
 }
 
-- (void)zoomToolbarViewDidRequestFitPage {
+- (void)toolbarViewDidRequestFitPage {
   [self fitZoomToPage];
 }
 
-- (void)zoomToolbarViewDidSubmitZoomString:(NSString*)zoomString {
+- (void)toolbarViewDidSubmitZoomString:(NSString*)zoomString {
   [self applyZoomString:zoomString];
 }
 
