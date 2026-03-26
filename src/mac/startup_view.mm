@@ -18,10 +18,12 @@ constexpr CGFloat kMaxVisibleRows = 5.0f;
 
 }  // namespace
 
-@interface PDFStartupView ()
+@interface PDFStartupView () <NSDraggingDestination>
 
 - (void)layoutStartupView;
 - (void)rebuildRecentsList;
+- (NSArray<NSString*>*)pdfPathsFromDraggingInfo:(id<NSDraggingInfo>)draggingInfo;
+- (void)setOpenPanelHighlighted:(BOOL)highlighted;
 - (IBAction)openSelectedRecentDocument:(id)sender;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)clearRecents:(id)sender;
@@ -34,15 +36,18 @@ constexpr CGFloat kMaxVisibleRows = 5.0f;
   NSView* recentsListView_;
   NSButton* clearButton_;
   std::vector<std::string> recentDocumentPaths_;
+  BOOL openPanelHighlighted_;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame delegate:(id<PDFStartupViewDelegate>)delegate {
   self = [super initWithFrame:frame];
   if (self != nil) {
     delegate_ = delegate;
+    openPanelHighlighted_ = NO;
     [self setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [self setWantsLayer:YES];
     [[self layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.96 alpha:1.0] CGColor]];
+    [self registerForDraggedTypes:[NSArray arrayWithObject:NSPasteboardTypeFileURL]];
 
     NSTextField* openTitleLabel =
         [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
@@ -140,6 +145,93 @@ constexpr CGFloat kMaxVisibleRows = 5.0f;
 - (void)setRecentDocumentPaths:(const std::vector<std::string>&)documentPaths {
   recentDocumentPaths_ = documentPaths;
   [self rebuildRecentsList];
+}
+
+- (NSArray<NSString*>*)pdfPathsFromDraggingInfo:(id<NSDraggingInfo>)draggingInfo {
+  NSPasteboard* pasteboard = [draggingInfo draggingPasteboard];
+  NSArray<NSURL*>* urls =
+      [pasteboard readObjectsForClasses:[NSArray arrayWithObject:[NSURL class]]
+                                options:@{
+                                  NSPasteboardURLReadingFileURLsOnlyKey : @YES
+                                }];
+  if (urls == nil || [urls count] == 0) {
+    return [NSArray array];
+  }
+
+  NSMutableArray<NSString*>* pdfPaths = [NSMutableArray array];
+  for (NSURL* url in urls) {
+    if (![url isFileURL]) {
+      continue;
+    }
+
+    NSString* path = [url path];
+    if (path == nil) {
+      continue;
+    }
+
+    NSString* pathExtension = [[path pathExtension] lowercaseString];
+    if ([pathExtension isEqualToString:@"pdf"]) {
+      [pdfPaths addObject:path];
+    }
+  }
+
+  return pdfPaths;
+}
+
+- (void)setOpenPanelHighlighted:(BOOL)highlighted {
+  openPanelHighlighted_ = highlighted;
+  if (openPanelView_ == nil || [openPanelView_ layer] == nil) {
+    return;
+  }
+
+  if (highlighted) {
+    [[openPanelView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.98 alpha:1.0] CGColor]];
+    [[openPanelView_ layer] setBorderColor:[[NSColor colorWithCalibratedRed:0.35 green:0.55 blue:0.92 alpha:1.0] CGColor]];
+    [[openPanelView_ layer] setBorderWidth:2.0f];
+  } else {
+    [[openPanelView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:1.0 alpha:0.9] CGColor]];
+    [[openPanelView_ layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.86 alpha:1.0] CGColor]];
+    [[openPanelView_ layer] setBorderWidth:1.0f];
+  }
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  NSArray<NSString*>* pdfPaths = [self pdfPathsFromDraggingInfo:sender];
+  const BOOL acceptsDrop = [pdfPaths count] > 0;
+  [self setOpenPanelHighlighted:acceptsDrop];
+  return acceptsDrop ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+  NSArray<NSString*>* pdfPaths = [self pdfPathsFromDraggingInfo:sender];
+  const BOOL acceptsDrop = [pdfPaths count] > 0;
+  [self setOpenPanelHighlighted:acceptsDrop];
+  return acceptsDrop ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+  (void)sender;
+  [self setOpenPanelHighlighted:NO];
+}
+
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)sender {
+  return [[self pdfPathsFromDraggingInfo:sender] count] > 0;
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray<NSString*>* pdfPaths = [self pdfPathsFromDraggingInfo:sender];
+  [self setOpenPanelHighlighted:NO];
+  if ([pdfPaths count] == 0 || delegate_ == nil) {
+    return NO;
+  }
+
+  [delegate_ startupViewDidRequestOpenDocumentAtPaths:pdfPaths];
+  return YES;
+}
+
+- (void)concludeDragOperation:(id<NSDraggingInfo>)sender {
+  (void)sender;
+  [self setOpenPanelHighlighted:NO];
 }
 
 - (void)layoutStartupView {

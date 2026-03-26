@@ -8,6 +8,7 @@
 @protocol PDFStartupViewDelegate <NSObject>
 
 - (void)startupViewDidRequestOpenDocument;
+- (void)startupViewDidRequestOpenDocumentAtPaths:(NSArray<NSString*>*)paths;
 - (void)startupViewDidRequestOpenRecentDocumentAtIndex:(NSInteger)index;
 - (void)startupViewDidRequestClearRecents;
 

@@ -470,6 +470,20 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self openDocument:nil];
 }
 
+- (void)startupViewDidRequestOpenDocumentAtPaths:(NSArray<NSString*>*)paths {
+  if (paths == nil || [paths count] == 0) {
+    return;
+  }
+
+  for (NSUInteger index = 0; index < [paths count]; ++index) {
+    NSString* path = [paths objectAtIndex:index];
+    if (path == nil || [path length] == 0) {
+      continue;
+    }
+    [self openDocumentAtPath:[path UTF8String] makeActive:index + 1 == [paths count]];
+  }
+}
+
 - (void)startupViewDidRequestOpenRecentDocumentAtIndex:(NSInteger)index {
   const std::vector<std::string>& recentDocumentPaths = [recentDocumentsController_ recentDocumentPaths];
   if (index < 0 || index >= static_cast<NSInteger>(recentDocumentPaths.size())) {
