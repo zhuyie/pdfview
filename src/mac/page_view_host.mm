@@ -79,9 +79,9 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
 
 - (void)mouseDragged:(NSEvent*)event {
   if (self.selectionDelegate != nil) {
-    [self.selectionDelegate pageViewHostDidUpdateTextSelectionAtPageIndex:self.pageIndex
-                                                                 location:[self convertPoint:[event locationInWindow]
-                                                                                      fromView:nil]];
+    [self.selectionDelegate pageViewHostDidUpdateTextSelectionAtDocumentLocation:
+                                [[self superview] convertPoint:[event locationInWindow]
+                                                       fromView:nil]];
   }
 }
 
@@ -92,9 +92,9 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   }
 
   if (self.selectionDelegate != nil) {
-    [self.selectionDelegate pageViewHostDidEndTextSelectionAtPageIndex:self.pageIndex
-                                                              location:[self convertPoint:[event locationInWindow]
-                                                                                   fromView:nil]];
+    [self.selectionDelegate pageViewHostDidEndTextSelectionAtDocumentLocation:
+                                [[self superview] convertPoint:[event locationInWindow]
+                                                       fromView:nil]];
   }
 }
 

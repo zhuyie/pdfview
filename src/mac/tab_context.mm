@@ -174,30 +174,39 @@ namespace {
 }
 
 - (void)beginTextSelectionOnPageIndex:(int)pageIndex charIndex:(int)charIndex {
-  const int previousPageIndex = textSelection_.pageIndex;
+  const int previousAnchorPageIndex = textSelection_.anchorPageIndex;
+  const int previousFocusPageIndex = textSelection_.focusPageIndex;
   textSelection_.dragging = true;
-  textSelection_.pageIndex = pageIndex;
+  textSelection_.anchorPageIndex = pageIndex;
   textSelection_.anchorCharIndex = charIndex;
+  textSelection_.focusPageIndex = pageIndex;
   textSelection_.focusCharIndex = charIndex;
   textSelection_.text.clear();
-  textSelection_.pageRects.clear();
-  if (previousPageIndex >= 0 && previousPageIndex != pageIndex) {
-    [pageViewHost_ clearSelectionAtIndex:previousPageIndex];
+  textSelection_.spans.clear();
+  if (previousAnchorPageIndex >= 0) {
+    [pageViewHost_ clearSelectionAtIndex:previousAnchorPageIndex];
+  }
+  if (previousFocusPageIndex >= 0 && previousFocusPageIndex != previousAnchorPageIndex) {
+    [pageViewHost_ clearSelectionAtIndex:previousFocusPageIndex];
   }
   [self syncTextSelectionOverlay];
 }
 
-- (void)setTextSelectionAnchorCharIndex:(int)charIndex {
+- (void)setTextSelectionAnchorPageIndex:(int)pageIndex charIndex:(int)charIndex {
+  textSelection_.anchorPageIndex = pageIndex;
   textSelection_.anchorCharIndex = charIndex;
+  textSelection_.focusPageIndex = pageIndex;
   textSelection_.focusCharIndex = charIndex;
 }
 
-- (void)updateTextSelectionWithFocusCharIndex:(int)charIndex
+- (void)updateTextSelectionWithFocusPageIndex:(int)pageIndex
+                                    charIndex:(int)charIndex
                                          text:(const std::string&)text
-                                    pageRects:(const std::vector<pdfview::core::PageTextRect>&)pageRects {
+                                        spans:(const std::vector<pdfview::core::PageTextSelectionSpan>&)spans {
+  textSelection_.focusPageIndex = pageIndex;
   textSelection_.focusCharIndex = charIndex;
   textSelection_.text = text;
-  textSelection_.pageRects = pageRects;
+  textSelection_.spans = spans;
   [self syncTextSelectionOverlay];
 }
 
@@ -206,27 +215,39 @@ namespace {
 }
 
 - (void)clearTextSelection {
-  const int selectedPageIndex = textSelection_.pageIndex;
+  const int selectedAnchorPageIndex = textSelection_.anchorPageIndex;
+  const int selectedFocusPageIndex = textSelection_.focusPageIndex;
+  for (size_t index = 0; index < textSelection_.spans.size(); ++index) {
+    [pageViewHost_ clearSelectionAtIndex:textSelection_.spans[index].page_index];
+  }
   textSelection_ = TextSelectionState();
-  if (selectedPageIndex >= 0) {
-    [pageViewHost_ clearSelectionAtIndex:selectedPageIndex];
+  if (selectedAnchorPageIndex >= 0) {
+    [pageViewHost_ clearSelectionAtIndex:selectedAnchorPageIndex];
+  }
+  if (selectedFocusPageIndex >= 0 && selectedFocusPageIndex != selectedAnchorPageIndex) {
+    [pageViewHost_ clearSelectionAtIndex:selectedFocusPageIndex];
   }
 }
 
 - (void)syncTextSelectionOverlay {
-  if (textSelection_.pageIndex < 0 ||
-      textSelection_.pageIndex >= static_cast<int>(viewModel_.page_frames().size()) ||
-      textSelection_.pageIndex >= static_cast<int>(viewModel_.page_sizes().size())) {
-    return;
+  for (int pageIndex = 0; pageIndex < viewModel_.page_count(); ++pageIndex) {
+    [pageViewHost_ clearSelectionAtIndex:pageIndex];
   }
 
-  const pdfview::core::ViewRect& pageFrame = viewModel_.page_frames()[textSelection_.pageIndex];
-  const pdfview::core::PageSize& pageSize = viewModel_.page_sizes()[textSelection_.pageIndex];
-  const std::vector<pdfview::core::ViewRect> selectionRects =
-      pdfview::core::page_text_rects_to_page_view_rects(textSelection_.pageRects,
-                                                        pageSize,
-                                                        pageFrame);
-  [pageViewHost_ setSelectionRects:selectionRects atIndex:textSelection_.pageIndex];
+  for (size_t index = 0; index < textSelection_.spans.size(); ++index) {
+    const pdfview::core::PageTextSelectionSpan& span = textSelection_.spans[index];
+    if (span.page_index < 0 ||
+        span.page_index >= static_cast<int>(viewModel_.page_frames().size()) ||
+        span.page_index >= static_cast<int>(viewModel_.page_sizes().size())) {
+      continue;
+    }
+
+    const pdfview::core::ViewRect& pageFrame = viewModel_.page_frames()[span.page_index];
+    const pdfview::core::PageSize& pageSize = viewModel_.page_sizes()[span.page_index];
+    const std::vector<pdfview::core::ViewRect> selectionRects =
+        pdfview::core::page_text_rects_to_page_view_rects(span.rects, pageSize, pageFrame);
+    [pageViewHost_ setSelectionRects:selectionRects atIndex:span.page_index];
+  }
 }
 
 - (BOOL)hasSelectedText {

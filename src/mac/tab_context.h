@@ -17,14 +17,19 @@ struct PageRenderCacheEntry {
 
 struct TextSelectionState {
   bool dragging;
-  int pageIndex;
+  int anchorPageIndex;
   int anchorCharIndex;
+  int focusPageIndex;
   int focusCharIndex;
   std::string text;
-  std::vector<pdfview::core::PageTextRect> pageRects;
+  std::vector<pdfview::core::PageTextSelectionSpan> spans;
 
   TextSelectionState()
-      : dragging(false), pageIndex(-1), anchorCharIndex(-1), focusCharIndex(-1) {}
+      : dragging(false),
+        anchorPageIndex(-1),
+        anchorCharIndex(-1),
+        focusPageIndex(-1),
+        focusCharIndex(-1) {}
 };
 
 @interface FlippedDocumentView : NSView
@@ -69,10 +74,11 @@ struct TextSelectionState {
 - (void)rememberVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
                               renderScale:(float)renderScale;
 - (void)beginTextSelectionOnPageIndex:(int)pageIndex charIndex:(int)charIndex;
-- (void)setTextSelectionAnchorCharIndex:(int)charIndex;
-- (void)updateTextSelectionWithFocusCharIndex:(int)charIndex
+- (void)setTextSelectionAnchorPageIndex:(int)pageIndex charIndex:(int)charIndex;
+- (void)updateTextSelectionWithFocusPageIndex:(int)pageIndex
+                                    charIndex:(int)charIndex
                                          text:(const std::string&)text
-                                    pageRects:(const std::vector<pdfview::core::PageTextRect>&)pageRects;
+                                        spans:(const std::vector<pdfview::core::PageTextSelectionSpan>&)spans;
 - (void)endTextSelection;
 - (void)clearTextSelection;
 - (void)syncTextSelectionOverlay;

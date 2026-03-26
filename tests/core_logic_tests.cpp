@@ -48,6 +48,13 @@ class FakeDocument : public pdfview::core::Document {
     return -1;
   }
 
+  int page_text_char_count(int page_index) const override {
+    if (page_index < 0 || page_index >= static_cast<int>(page_sizes_.size())) {
+      return 0;
+    }
+    return 0;
+  }
+
   pdfview::core::PageTextSelection text_selection_for_range(int, int, int) const override {
     return pdfview::core::PageTextSelection();
   }
@@ -258,6 +265,23 @@ bool TestMakeTextCharRange() {
          Expect(backward.start_index == 2 && backward.count == 5,
                 "backward drag should normalize to the same range") &&
          Expect(empty.empty(), "same-character drag should not create a visible selection");
+}
+
+bool TestMakeTextSelectionRange() {
+  pdfview::core::TextSelectionEndpoint anchor;
+  anchor.page_index = 3;
+  anchor.char_index = 4;
+  pdfview::core::TextSelectionEndpoint focus;
+  focus.page_index = 1;
+  focus.char_index = 9;
+
+  const pdfview::core::TextSelectionRange range =
+      pdfview::core::make_text_selection_range(anchor, focus);
+
+  return Expect(range.start.page_index == 1 && range.start.char_index == 9,
+                "multi-page selection range should normalize the earlier endpoint first") &&
+         Expect(range.end.page_index == 3 && range.end.char_index == 4,
+                "multi-page selection range should keep the later endpoint second");
 }
 
 bool TestPageTextRectsToPageViewRects() {
@@ -765,6 +789,9 @@ int main() {
     return 1;
   }
   if (!TestMakeTextCharRange()) {
+    return 1;
+  }
+  if (!TestMakeTextSelectionRange()) {
     return 1;
   }
   if (!TestPageTextRectsToPageViewRects()) {

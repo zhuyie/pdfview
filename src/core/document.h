@@ -43,6 +43,11 @@ struct PageTextSelection {
   bool ok() const { return page_index >= 0 && start_index >= 0 && count > 0; }
 };
 
+struct PageTextSelectionSpan {
+  int page_index = -1;
+  std::vector<PageTextRect> rects;
+};
+
 class Document {
  public:
   virtual ~Document() = default;
@@ -55,6 +60,7 @@ class Document {
                                   float page_y,
                                   float x_tolerance,
                                   float y_tolerance) const = 0;
+  virtual int page_text_char_count(int page_index) const = 0;
   virtual PageTextSelection text_selection_for_range(int page_index,
                                                      int start_index,
                                                      int count) const = 0;

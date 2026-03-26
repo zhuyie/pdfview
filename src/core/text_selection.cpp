@@ -124,6 +124,21 @@ TextCharRange make_text_char_range(int anchor_index, int focus_index) {
   return range;
 }
 
+TextSelectionRange make_text_selection_range(const TextSelectionEndpoint& anchor,
+                                             const TextSelectionEndpoint& focus) {
+  TextSelectionRange range;
+  if (!anchor.valid() || !focus.valid()) {
+    return range;
+  }
+
+  const bool anchor_before_focus =
+      anchor.page_index < focus.page_index ||
+      (anchor.page_index == focus.page_index && anchor.char_index <= focus.char_index);
+  range.start = anchor_before_focus ? anchor : focus;
+  range.end = anchor_before_focus ? focus : anchor;
+  return range;
+}
+
 bool page_point_from_page_view_point(float view_x,
                                      float view_y,
                                      const PageSize& page_size,

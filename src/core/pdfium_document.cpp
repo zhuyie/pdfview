@@ -3,6 +3,7 @@
 #include <codecvt>
 #include <locale>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -100,10 +101,12 @@ class PdfiumDocument final : public Document {
   }
 
   int page_count() const override {
+    std::lock_guard<std::mutex> lock(mutex_);
     return FPDF_GetPageCount(handle_);
   }
 
   PageSize page_size(int page_index) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
     FS_SIZEF size{};
     if (!FPDF_GetPageSizeByIndexF(handle_, page_index, &size)) {
       return PageSize();
@@ -116,13 +119,24 @@ class PdfiumDocument final : public Document {
   }
 
   RenderPageResult render_page(int page_index, float scale) const override {
-    if (page_index < 0 || page_index >= page_count()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int document_page_count = FPDF_GetPageCount(handle_);
+    if (page_index < 0 || page_index >= document_page_count) {
       RenderPageResult result;
       result.error = "Page index out of range";
       return result;
     }
 
-    const PageSize size = page_size(page_index);
+    FS_SIZEF raw_size{};
+    if (!FPDF_GetPageSizeByIndexF(handle_, page_index, &raw_size)) {
+      RenderPageResult result;
+      result.error = "Invalid page size";
+      return result;
+    }
+
+    PageSize size;
+    size.width = raw_size.width;
+    size.height = raw_size.height;
     const int width = size.width > 0.0f ? static_cast<int>(size.width * scale) : 0;
     const int height = size.height > 0.0f ? static_cast<int>(size.height * scale) : 0;
     if (width <= 0 || height <= 0) {
@@ -167,7 +181,9 @@ class PdfiumDocument final : public Document {
                           float page_y,
                           float x_tolerance,
                           float y_tolerance) const override {
-    if (page_index < 0 || page_index >= page_count()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int document_page_count = FPDF_GetPageCount(handle_);
+    if (page_index < 0 || page_index >= document_page_count) {
       return -1;
     }
 
@@ -188,11 +204,72 @@ class PdfiumDocument final : public Document {
                                       y_tolerance);
   }
 
+  int page_text_char_count(int page_index) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int document_page_count = FPDF_GetPageCount(handle_);
+    if (page_index < 0 || page_index >= document_page_count) {
+      return 0;
+    }
+
+    ScopedPdfPage page(handle_, page_index);
+    if (page.get() == NULL) {
+      return 0;
+    }
+
+    ScopedPdfTextPage text_page(page.get());
+    if (text_page.get() == NULL) {
+      return 0;
+    }
+
+    return std::max(FPDFText_CountChars(text_page.get()), 0);
+  }
+
   PageTextSelection text_selection_for_range(int page_index,
                                              int start_index,
                                              int count) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return text_selection_for_range_unlocked(page_index, start_index, count);
+  }
+
+  PageTextSelection word_selection_at_index(int page_index, int char_index) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
     PageTextSelection selection;
-    if (page_index < 0 || page_index >= page_count() || start_index < 0 || count <= 0) {
+    const int document_page_count = FPDF_GetPageCount(handle_);
+    if (page_index < 0 || page_index >= document_page_count || char_index < 0) {
+      return selection;
+    }
+
+    ScopedPdfPage page(handle_, page_index);
+    if (page.get() == NULL) {
+      return selection;
+    }
+
+    ScopedPdfTextPage text_page(page.get());
+    if (text_page.get() == NULL) {
+      return selection;
+    }
+
+    const int char_count = FPDFText_CountChars(text_page.get());
+    if (char_count <= 0 || char_index >= char_count) {
+      return selection;
+    }
+
+    const std::vector<unsigned int> codepoints = LoadPageCodepoints(text_page.get(), char_count);
+    const TextCharRange range = word_char_range_from_text(codepoints, char_index);
+    if (range.empty()) {
+      return selection;
+    }
+
+    return text_selection_for_range_unlocked(page_index, range.start_index, range.count);
+  }
+
+ private:
+  PageTextSelection text_selection_for_range_unlocked(int page_index,
+                                                      int start_index,
+                                                      int count) const {
+    PageTextSelection selection;
+    const int document_page_count = FPDF_GetPageCount(handle_);
+    if (page_index < 0 || page_index >= document_page_count || start_index < 0 || count <= 0) {
       return selection;
     }
 
@@ -248,38 +325,8 @@ class PdfiumDocument final : public Document {
     return selection;
   }
 
-  PageTextSelection word_selection_at_index(int page_index, int char_index) const override {
-    PageTextSelection selection;
-    if (page_index < 0 || page_index >= page_count() || char_index < 0) {
-      return selection;
-    }
-
-    ScopedPdfPage page(handle_, page_index);
-    if (page.get() == NULL) {
-      return selection;
-    }
-
-    ScopedPdfTextPage text_page(page.get());
-    if (text_page.get() == NULL) {
-      return selection;
-    }
-
-    const int char_count = FPDFText_CountChars(text_page.get());
-    if (char_count <= 0 || char_index >= char_count) {
-      return selection;
-    }
-
-    const std::vector<unsigned int> codepoints = LoadPageCodepoints(text_page.get(), char_count);
-    const TextCharRange range = word_char_range_from_text(codepoints, char_index);
-    if (range.empty()) {
-      return selection;
-    }
-
-    return text_selection_for_range(page_index, range.start_index, range.count);
-  }
-
- private:
   FPDF_DOCUMENT handle_ = nullptr;
+  mutable std::mutex mutex_;
 };
 
 }  // namespace
