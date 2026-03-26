@@ -27,6 +27,7 @@ Native macOS UI:
 - `NSView`
 - Input event bridging
 - Retina / backing-scale handling
+- Document interaction controllers for scroll/selection behavior
 
 This layer should use Objective-C++ and hold the C++ core as ordinary objects.
 
@@ -97,6 +98,20 @@ Basic flow:
 3. Use the text-page API to get the character index
 4. Compute the selection range
 5. Convert character quads back into view coordinates for overlay rendering
+
+Current implementation split:
+
+- `src/core/text_selection.*`
+  - shared selection state primitives
+  - token boundary rules
+  - cross-page text/span assembly
+  - document-point fallback helpers
+- `src/mac/text_selection_controller.*`
+  - macOS event-level selection orchestration
+- `src/mac/document_interaction_controller.*`
+  - selection auto-scroll and related interaction timers
+- `src/mac/tab_context.*`
+  - per-tab selection state and overlay application
 
 ### 5. Cache Strategy
 

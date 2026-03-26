@@ -1,22 +1,27 @@
 # Text Selection
 
 This document describes the current text-selection behavior in the macOS
-viewer, with emphasis on double-click word selection and selection highlight
-visibility.
+viewer, including drag selection, double-click token selection, copy/select-all
+actions, and the current implementation split between core and macOS layers.
 
 ## Current Scope
 
 Current text selection supports:
 
-- single-page drag selection
+- single-page and multi-page drag selection
+- gap fallback between pages while dragging
+- auto-scroll while extending a selection near the viewport edge
 - copy via `Cmd+C` / `Edit > Copy`
+- select all via `Cmd+A` / `Edit > Select All`
 - double-click token selection
+- selection context menu with `Copy`
 
 It does not yet support:
 
-- multi-page drag selection
-- auto-scroll while extending a selection
+- triple-click line selection
+- selecting a word on right-click before opening the context menu
 - language-aware word segmentation
+- richer context-menu actions such as search or lookup
 
 ## Double-Click Token Rules
 
@@ -95,6 +100,49 @@ Examples:
 - `I`
 - `l`
 - `-`
+
+## Interaction Details
+
+- Drag selection can begin from page whitespace. The anchor is created when the
+  drag first hits selectable text.
+- Multi-page drag selection can extend across page gaps. When the pointer is in
+  whitespace between pages, selection falls back to the next page start or the
+  previous page end based on drag direction.
+- Auto-scroll is enabled while dragging near the top or bottom of the visible
+  document area.
+- The context menu only appears when right-clicking inside the current
+  selection.
+
+## Implementation Layout
+
+The current implementation is split across three layers.
+
+### `src/core`
+
+- tokenization and double-click boundary rules
+- page/view coordinate conversion helpers
+- cross-page selection normalization and text/span assembly
+
+Key files:
+
+- `src/core/text_selection.h`
+- `src/core/text_selection.cpp`
+
+### `src/mac/text_selection_controller.mm`
+
+- page hit-testing against the active document view model
+- drag-update and double-click selection orchestration
+- select-all behavior for the current tab
+
+### `src/mac/document_interaction_controller.mm`
+
+- selection auto-scroll timer and edge-trigger behavior
+- scroll-driven interaction coordination shared with the viewer
+
+### `src/mac/tab_context.mm`
+
+- current selection state storage for a tab
+- overlay synchronization from selection spans into page views
 
 ## Known Limitations
 
