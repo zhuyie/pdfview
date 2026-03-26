@@ -105,6 +105,15 @@ Examples:
 
 - Drag selection can begin from page whitespace. The anchor is created when the
   drag first hits selectable text.
+- While dragging inside a page, if the pointer moves into whitespace that does
+  not directly hit text, selection falls back to nearby text on the same page.
+  In practice this means:
+  - whitespace to the left or right of a short line snaps toward that line's
+    start or end
+  - whitespace between nearby lines snaps to the nearest line before choosing a
+    character boundary
+  - whitespace above or below all text on the page snaps to the page's first or
+    last character
 - Multi-page drag selection can extend across page gaps. When the pointer is in
   whitespace between pages, selection falls back to the next page start or the
   previous page end based on drag direction.
@@ -122,6 +131,7 @@ The current implementation is split across three layers.
 - tokenization and double-click boundary rules
 - page/view coordinate conversion helpers
 - cross-page selection normalization and text/span assembly
+- page-local whitespace fallback based on PDFium character boxes
 
 Key files:
 
