@@ -8,6 +8,7 @@
 #include "core/document_paths.h"
 #include "core/page_cache.h"
 #include "core/recent_documents.h"
+#include "core/text_selection.h"
 #include "core/viewer_layout.h"
 #include "core/viewport.h"
 
@@ -41,6 +42,14 @@ class FakeDocument : public pdfview::core::Document {
 
   pdfview::core::RenderPageResult render_page(int, float) const override {
     return pdfview::core::RenderPageResult();
+  }
+
+  int text_index_at_point(int, float, float, float, float) const override {
+    return -1;
+  }
+
+  pdfview::core::PageTextSelection text_selection_for_range(int, int, int) const override {
+    return pdfview::core::PageTextSelection();
   }
 
  private:
@@ -233,6 +242,43 @@ bool TestRenderPlanFingerprint() {
   return Expect(matches_same, "matching cache plans should hit the same fingerprint") &&
          Expect(rejects_other_scale, "fingerprints should include render scale") &&
          Expect(rejects_other_keep, "fingerprints should include keep range");
+}
+
+bool TestMakeTextCharRange() {
+  const pdfview::core::TextCharRange forward = pdfview::core::make_text_char_range(2, 6);
+  const pdfview::core::TextCharRange backward = pdfview::core::make_text_char_range(6, 2);
+  const pdfview::core::TextCharRange empty = pdfview::core::make_text_char_range(3, 3);
+
+  return Expect(forward.start_index == 2 && forward.count == 5,
+                "forward drag should include both endpoints") &&
+         Expect(backward.start_index == 2 && backward.count == 5,
+                "backward drag should normalize to the same range") &&
+         Expect(empty.empty(), "same-character drag should not create a visible selection");
+}
+
+bool TestPageTextRectsToPageViewRects() {
+  pdfview::core::PageSize page_size;
+  page_size.width = 100.0f;
+  page_size.height = 200.0f;
+
+  pdfview::core::ViewRect page_frame;
+  page_frame.width = 200.0f;
+  page_frame.height = 400.0f;
+
+  std::vector<pdfview::core::PageTextRect> text_rects(1);
+  text_rects[0].left = 10.0f;
+  text_rects[0].right = 50.0f;
+  text_rects[0].top = 180.0f;
+  text_rects[0].bottom = 160.0f;
+
+  const std::vector<pdfview::core::ViewRect> view_rects =
+      pdfview::core::page_text_rects_to_page_view_rects(text_rects, page_size, page_frame);
+
+  return Expect(view_rects.size() == 1, "text rect conversion should preserve valid rects") &&
+         Expect(NearlyEqual(view_rects[0].x, 20.0f), "converted text rect x is incorrect") &&
+         Expect(NearlyEqual(view_rects[0].y, 40.0f), "converted text rect y is incorrect") &&
+         Expect(NearlyEqual(view_rects[0].width, 80.0f), "converted text rect width is incorrect") &&
+         Expect(NearlyEqual(view_rects[0].height, 40.0f), "converted text rect height is incorrect");
 }
 
 bool TestRecentDocumentDeduplication() {
@@ -601,6 +647,12 @@ int main() {
     return 1;
   }
   if (!TestRenderPlanFingerprint()) {
+    return 1;
+  }
+  if (!TestMakeTextCharRange()) {
+    return 1;
+  }
+  if (!TestPageTextRectsToPageViewRects()) {
     return 1;
   }
   if (!TestRecentDocumentDeduplication()) {
