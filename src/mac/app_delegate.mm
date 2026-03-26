@@ -875,12 +875,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   NSClipView* clipView = [context->scrollView_ contentView];
+  suppressScrollTracking_ = YES;
   [clipView scrollToPoint:NSMakePoint([clipView bounds].origin.x,
                                       context->viewModel_.scroll_y_for_current_page())];
   [context->scrollView_ reflectScrolledClipView:clipView];
   context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
                                         [[context->scrollView_ contentView] bounds].origin.y);
+  context->viewModel_.update_current_page_from_scroll();
+  [self showPageIndicatorForContext:context];
   [self updateVisiblePagesForContext:context];
+  suppressScrollTracking_ = NO;
 }
 
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context {
