@@ -1,13 +1,25 @@
 #import "mac/document_interaction_controller.h"
 
+#include <algorithm>
+
 #import "mac/chrome_metrics.h"
 #import "mac/page_indicator_view.h"
+
+namespace {
+
+constexpr CGFloat kSelectionAutoScrollEdgeInset = 36.0;
+constexpr CGFloat kSelectionAutoScrollMaxStep = 28.0;
+constexpr NSTimeInterval kSelectionAutoScrollTickInterval = 1.0 / 60.0;
+
+}  // namespace
 
 @interface PDFDocumentInteractionController ()
 
 - (void)endInteractiveRendering:(NSTimer*)timer;
 - (void)hidePageIndicatorTimerFired:(NSTimer*)timer;
 - (void)ensurePageIndicatorAttachedToContext:(PDFTabContext*)context;
+- (void)handleSelectionAutoScrollTick:(NSTimer*)timer;
+- (void)startSelectionAutoScrollForContext:(PDFTabContext*)context;
 
 @end
 
@@ -16,6 +28,9 @@
   PDFPageIndicatorView* pageIndicatorView_;
   NSTimer* interactiveRenderTimer_;
   NSTimer* pageIndicatorTimer_;
+  NSTimer* selectionAutoScrollTimer_;
+  PDFTabContext* selectionAutoScrollContext_;
+  NSPoint selectionAutoScrollDocumentLocation_;
   PDFTabContext* interactiveRenderContext_;
 }
 
@@ -26,6 +41,9 @@
     pageIndicatorView_ = nil;
     interactiveRenderTimer_ = nil;
     pageIndicatorTimer_ = nil;
+    selectionAutoScrollTimer_ = nil;
+    selectionAutoScrollContext_ = nil;
+    selectionAutoScrollDocumentLocation_ = NSZeroPoint;
     interactiveRenderContext_ = nil;
   }
   return self;
@@ -140,6 +158,95 @@
     pageIndicatorTimer_ = nil;
   }
   [pageIndicatorView_ setHidden:YES];
+}
+
+- (void)startSelectionAutoScrollForContext:(PDFTabContext*)context {
+  if (context == nil) {
+    return;
+  }
+
+  selectionAutoScrollContext_ = context;
+  if (selectionAutoScrollTimer_ != nil) {
+    return;
+  }
+
+  selectionAutoScrollTimer_ =
+      [NSTimer scheduledTimerWithTimeInterval:kSelectionAutoScrollTickInterval
+                                       target:self
+                                     selector:@selector(handleSelectionAutoScrollTick:)
+                                     userInfo:nil
+                                      repeats:YES];
+  [[NSRunLoop mainRunLoop] addTimer:selectionAutoScrollTimer_ forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopSelectionAutoScroll {
+  if (selectionAutoScrollTimer_ != nil) {
+    [selectionAutoScrollTimer_ invalidate];
+    selectionAutoScrollTimer_ = nil;
+  }
+  selectionAutoScrollContext_ = nil;
+}
+
+- (void)updateSelectionAutoScrollForDocumentLocation:(NSPoint)documentLocation
+                                             context:(PDFTabContext*)context {
+  selectionAutoScrollDocumentLocation_ = documentLocation;
+  if (context == nil || !context->textSelection_.dragging) {
+    [self stopSelectionAutoScroll];
+    return;
+  }
+
+  NSClipView* clipView = [context->scrollView_ contentView];
+  const NSRect visibleBounds = [clipView bounds];
+  const CGFloat distanceToTop = documentLocation.y - visibleBounds.origin.y;
+  const CGFloat distanceToBottom = NSMaxY(visibleBounds) - documentLocation.y;
+  const BOOL nearTop = distanceToTop < kSelectionAutoScrollEdgeInset;
+  const BOOL nearBottom = distanceToBottom < kSelectionAutoScrollEdgeInset;
+  if (!nearTop && !nearBottom) {
+    [self stopSelectionAutoScroll];
+    return;
+  }
+
+  [self startSelectionAutoScrollForContext:context];
+}
+
+- (void)handleSelectionAutoScrollTick:(NSTimer*)timer {
+  if (timer != selectionAutoScrollTimer_ || selectionAutoScrollContext_ == nil || delegate_ == nil) {
+    return;
+  }
+
+  PDFTabContext* context = selectionAutoScrollContext_;
+  NSClipView* clipView = [context->scrollView_ contentView];
+  const NSRect visibleBounds = [clipView bounds];
+  const CGFloat distanceToTop = selectionAutoScrollDocumentLocation_.y - visibleBounds.origin.y;
+  const CGFloat distanceToBottom = NSMaxY(visibleBounds) - selectionAutoScrollDocumentLocation_.y;
+
+  CGFloat scrollDelta = 0.0;
+  if (distanceToTop < kSelectionAutoScrollEdgeInset) {
+    const CGFloat intensity =
+        std::max((kSelectionAutoScrollEdgeInset - distanceToTop) / kSelectionAutoScrollEdgeInset,
+                 0.0);
+    scrollDelta = -std::max(intensity * kSelectionAutoScrollMaxStep, 1.0);
+  } else if (distanceToBottom < kSelectionAutoScrollEdgeInset) {
+    const CGFloat intensity =
+        std::max((kSelectionAutoScrollEdgeInset - distanceToBottom) / kSelectionAutoScrollEdgeInset,
+                 0.0);
+    scrollDelta = std::max(intensity * kSelectionAutoScrollMaxStep, 1.0);
+  } else {
+    [self stopSelectionAutoScroll];
+    return;
+  }
+
+  if (![delegate_ documentInteractionControllerPerformSelectionAutoScrollForContext:context
+                                                                             deltaY:scrollDelta]) {
+    return;
+  }
+
+  NSWindow* window = [context->documentView_ window];
+  const NSPoint windowLocation = [window mouseLocationOutsideOfEventStream];
+  const NSPoint documentLocation = [context->documentView_ convertPoint:windowLocation fromView:nil];
+  selectionAutoScrollDocumentLocation_ = documentLocation;
+  [delegate_ documentInteractionControllerUpdateTextSelectionAtDocumentLocation:documentLocation
+                                                                        context:context];
 }
 
 - (void)handleClipViewDidScrollForContext:(PDFTabContext*)context

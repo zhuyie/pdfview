@@ -1,5 +1,7 @@
 #import "mac/tab_context.h"
 
+#include "core/text_selection.h"
+
 namespace {
 
 }  // namespace
@@ -16,7 +18,8 @@ namespace {
 
 - (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
                             path:(const std::string&)path
-                           frame:(NSRect)frame {
+                           frame:(NSRect)frame
+                        delegate:(id<PDFPageViewHostDelegate>)delegate {
   self = [super init];
   if (self != nil) {
     viewModel_ = pdfview::core::DocumentViewModel(document);
@@ -45,7 +48,8 @@ namespace {
     [documentView_ setWantsLayer:YES];
     [[documentView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
     pageViewHost_ = [[PDFPageViewHost alloc] initWithDocumentView:documentView_
-                                                   pageImageViews:&pageImageViews_];
+                                                   pageImageViews:&pageImageViews_
+                                                         delegate:delegate];
     [scrollView_ setDocumentView:documentView_];
     [containerView_ addSubview:scrollView_];
   }
@@ -145,6 +149,7 @@ namespace {
 
 - (void)syncPageFrames {
   [pageViewHost_ syncPageFrames:viewModel_.page_frames()];
+  [self syncTextSelectionOverlay];
 }
 
 - (void)clearPageImageAtIndex:(int)pageIndex {
@@ -166,6 +171,123 @@ namespace {
                               renderScale:(float)renderScale {
   lastRenderPlanFingerprint_ =
       pdfview::core::render_plan_fingerprint_for_visible_update(cachePlan, renderScale);
+}
+
+- (void)beginTextSelectionOnPageIndex:(int)pageIndex charIndex:(int)charIndex {
+  const int previousAnchorPageIndex = textSelection_.anchor.page_index;
+  const int previousFocusPageIndex = textSelection_.focus.page_index;
+  textSelection_.dragging = true;
+  textSelection_.anchor.page_index = pageIndex;
+  textSelection_.anchor.char_index = charIndex;
+  textSelection_.focus.page_index = pageIndex;
+  textSelection_.focus.char_index = charIndex;
+  textSelection_.text.clear();
+  textSelection_.spans.clear();
+  if (previousAnchorPageIndex >= 0) {
+    [pageViewHost_ clearSelectionAtIndex:previousAnchorPageIndex];
+  }
+  if (previousFocusPageIndex >= 0 && previousFocusPageIndex != previousAnchorPageIndex) {
+    [pageViewHost_ clearSelectionAtIndex:previousFocusPageIndex];
+  }
+  [self syncTextSelectionOverlay];
+}
+
+- (void)setTextSelectionAnchorPageIndex:(int)pageIndex charIndex:(int)charIndex {
+  textSelection_.anchor.page_index = pageIndex;
+  textSelection_.anchor.char_index = charIndex;
+  textSelection_.focus.page_index = pageIndex;
+  textSelection_.focus.char_index = charIndex;
+}
+
+- (void)updateTextSelectionWithFocusPageIndex:(int)pageIndex
+                                    charIndex:(int)charIndex
+                                        text:(const std::string&)text
+                                        spans:(const std::vector<pdfview::core::PageTextSelectionSpan>&)spans {
+  textSelection_.focus.page_index = pageIndex;
+  textSelection_.focus.char_index = charIndex;
+  textSelection_.text = text;
+  textSelection_.spans = spans;
+  [self syncTextSelectionOverlay];
+}
+
+- (void)endTextSelection {
+  textSelection_.dragging = false;
+}
+
+- (void)clearTextSelection {
+  const int selectedAnchorPageIndex = textSelection_.anchor.page_index;
+  const int selectedFocusPageIndex = textSelection_.focus.page_index;
+  for (size_t index = 0; index < textSelection_.spans.size(); ++index) {
+    [pageViewHost_ clearSelectionAtIndex:textSelection_.spans[index].page_index];
+  }
+  textSelection_ = pdfview::core::TextSelectionState();
+  if (selectedAnchorPageIndex >= 0) {
+    [pageViewHost_ clearSelectionAtIndex:selectedAnchorPageIndex];
+  }
+  if (selectedFocusPageIndex >= 0 && selectedFocusPageIndex != selectedAnchorPageIndex) {
+    [pageViewHost_ clearSelectionAtIndex:selectedFocusPageIndex];
+  }
+}
+
+- (void)syncTextSelectionOverlay {
+  for (int pageIndex = 0; pageIndex < viewModel_.page_count(); ++pageIndex) {
+    [pageViewHost_ clearSelectionAtIndex:pageIndex];
+  }
+
+  for (size_t index = 0; index < textSelection_.spans.size(); ++index) {
+    const pdfview::core::PageTextSelectionSpan& span = textSelection_.spans[index];
+    if (span.page_index < 0 ||
+        span.page_index >= static_cast<int>(viewModel_.page_frames().size()) ||
+        span.page_index >= static_cast<int>(viewModel_.page_sizes().size())) {
+      continue;
+    }
+
+    const pdfview::core::ViewRect& pageFrame = viewModel_.page_frames()[span.page_index];
+    const pdfview::core::PageSize& pageSize = viewModel_.page_sizes()[span.page_index];
+    const std::vector<pdfview::core::ViewRect> selectionRects =
+        pdfview::core::page_text_rects_to_page_view_rects(span.rects, pageSize, pageFrame);
+    [pageViewHost_ setSelectionRects:selectionRects atIndex:span.page_index];
+  }
+}
+
+- (BOOL)hasSelectedText {
+  return textSelection_.has_selected_text();
+}
+
+- (NSString*)selectedText {
+  if (textSelection_.text.empty()) {
+    return @"";
+  }
+  return [NSString stringWithUTF8String:textSelection_.text.c_str()];
+}
+
+- (BOOL)selectionContainsPageIndex:(int)pageIndex location:(NSPoint)location {
+  if (pageIndex < 0) {
+    return NO;
+  }
+
+  for (size_t spanIndex = 0; spanIndex < textSelection_.spans.size(); ++spanIndex) {
+    const pdfview::core::PageTextSelectionSpan& span = textSelection_.spans[spanIndex];
+    if (span.page_index != pageIndex ||
+        span.page_index >= static_cast<int>(viewModel_.page_frames().size()) ||
+        span.page_index >= static_cast<int>(viewModel_.page_sizes().size())) {
+      continue;
+    }
+
+    const std::vector<pdfview::core::ViewRect> selectionRects =
+        pdfview::core::page_text_rects_to_page_view_rects(span.rects,
+                                                          viewModel_.page_sizes()[span.page_index],
+                                                          viewModel_.page_frames()[span.page_index]);
+    for (size_t rectIndex = 0; rectIndex < selectionRects.size(); ++rectIndex) {
+      const pdfview::core::ViewRect& rect = selectionRects[rectIndex];
+      if (location.x >= rect.x && location.x <= rect.x + rect.width &&
+          location.y >= rect.y && location.y <= rect.y + rect.height) {
+        return YES;
+      }
+    }
+  }
+
+  return NO;
 }
 
 @end

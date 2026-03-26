@@ -7,6 +7,7 @@
 
 #include "core/profiling.h"
 #include "core/document.h"
+#include "core/text_selection.h"
 #include "mac/chrome_metrics.h"
 #include "mac/document_drop_view.h"
 #include "mac/document_interaction_controller.h"
@@ -16,6 +17,7 @@
 #include "mac/startup_view.h"
 #include "mac/tab_strip_view.h"
 #include "mac/tab_context.h"
+#include "mac/text_selection_controller.h"
 #include "mac/toolbar_view.h"
 
 namespace {
@@ -31,7 +33,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate, PDFDocumentDropViewDelegate, PDFDocumentInteractionControllerDelegate>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate, PDFDocumentDropViewDelegate, PDFDocumentInteractionControllerDelegate, PDFPageViewHostDelegate>
 - (void)installMainMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
@@ -69,10 +71,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
 - (IBAction)openDocument:(id)sender;
+- (IBAction)copy:(id)sender;
+- (IBAction)selectAll:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
+- (NSMenu*)selectionContextMenu;
+- (void)showSelectionContextMenuWithEvent:(NSEvent*)event;
 - (void)installStartupViewInHost:(NSView*)hostView;
+- (void)updateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
+                                      context:(PDFTabContext*)context;
 @end
 
 @implementation AppDelegate {
@@ -84,6 +92,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFRecentDocumentsController* recentDocumentsController_;
   PDFDocumentWorkspaceController* workspaceController_;
   PDFDocumentInteractionController* interactionController_;
+  PDFTextSelectionController* textSelectionController_;
   PDFRenderCoordinator* renderCoordinator_;
   BOOL suppressScrollTracking_;
   id keyMonitor_;
@@ -102,6 +111,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     recentDocumentsController_ = [[PDFRecentDocumentsController alloc] initWithDelegate:self];
     workspaceController_ = nil;
     interactionController_ = [[PDFDocumentInteractionController alloc] initWithDelegate:self];
+    textSelectionController_ = [[PDFTextSelectionController alloc] init];
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     suppressScrollTracking_ = NO;
   }
@@ -176,6 +186,22 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [closeTabItem setTarget:self];
   [fileMenu addItem:closeTabItem];
   [fileMenuItem setSubmenu:fileMenu];
+
+  NSMenuItem* editMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+  [mainMenu addItem:editMenuItem];
+  NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+  NSMenuItem* selectAllItem = [[NSMenuItem alloc] initWithTitle:@"Select All"
+                                                         action:@selector(selectAll:)
+                                                  keyEquivalent:@"a"];
+  [selectAllItem setTarget:self];
+  [editMenu addItem:selectAllItem];
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                    action:@selector(copy:)
+                                             keyEquivalent:@"c"];
+  [copyItem setTarget:self];
+  [editMenu addItem:copyItem];
+  [editMenuItem setSubmenu:editMenu];
 
   NSMenuItem* viewMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
   [mainMenu addItem:viewMenuItem];
@@ -423,7 +449,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFTabContext* context =
       [[PDFTabContext alloc] initWithDocument:result.document
                                          path:path
-                                        frame:NSMakeRect(0, 0, 100, 100)];
+                                        frame:NSMakeRect(0, 0, 100, 100)
+                                     delegate:self];
   [recentDocumentsController_ noteOpenedDocumentPath:path];
   [startupView_ setRecentDocumentPaths:[recentDocumentsController_ recentDocumentPaths]];
   [[NSNotificationCenter defaultCenter] addObserver:self
@@ -455,6 +482,59 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   for (NSURL* url in [panel URLs]) {
     [self openDocumentAtPath:[[url path] UTF8String] makeActive:YES];
   }
+}
+
+- (IBAction)copy:(id)sender {
+  (void)sender;
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![context hasSelectedText]) {
+    return;
+  }
+
+  NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+  [pasteboard clearContents];
+  [pasteboard setString:[context selectedText] forType:NSPasteboardTypeString];
+}
+
+- (IBAction)selectAll:(id)sender {
+  id firstResponder = [window_ firstResponder];
+  if ([toolbarStrip_ isEditingZoomField] &&
+      [firstResponder respondsToSelector:@selector(selectAll:)]) {
+    [firstResponder selectAll:sender];
+    return;
+  }
+
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil) {
+    return;
+  }
+
+  [textSelectionController_ selectAllTextInContext:context];
+}
+
+- (NSMenu*)selectionContextMenu {
+  NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Selection"];
+  NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                    action:@selector(copy:)
+                                             keyEquivalent:@""];
+  [copyItem setTarget:self];
+  [menu addItem:copyItem];
+  return menu;
+}
+
+- (void)showSelectionContextMenuWithEvent:(NSEvent*)event {
+  if (event == nil) {
+    return;
+  }
+
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![context hasSelectedText]) {
+    return;
+  }
+
+  [NSMenu popUpContextMenu:[self selectionContextMenu]
+                 withEvent:event
+                   forView:context->documentView_];
 }
 
 - (void)startupViewDidRequestOpenDocument {
@@ -856,6 +936,14 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   context->viewModel_.update_current_page_from_scroll();
 }
 
+- (void)updateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
+                                      context:(PDFTabContext*)context {
+  [interactionController_ updateSelectionAutoScrollForDocumentLocation:documentLocation
+                                                               context:context];
+  [textSelectionController_ refreshTextSelectionAtDocumentLocation:documentLocation
+                                                           context:context];
+}
+
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
   PDFTabContext* context = [workspaceController_ contextForClipView:(NSClipView*)[notification object]];
   [interactionController_ handleClipViewDidScrollForContext:context
@@ -972,6 +1060,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   (void)notification;
   pdfview::core::flush_render_profile_summary();
   [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [interactionController_ stopSelectionAutoScroll];
   [interactionController_ cancelInteractiveRendering];
   [interactionController_ hidePageIndicator];
   if (keyMonitor_ != nil) {
@@ -1023,6 +1112,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return hasActiveDocument;
   }
 
+  if (action == @selector(selectAll:)) {
+    return [toolbarStrip_ isEditingZoomField] || hasActiveDocument;
+  }
+
+  if (action == @selector(copy:)) {
+    PDFTabContext* context = [workspaceController_ activeContext];
+    return context != nil && [context hasSelectedText];
+  }
+
   if (action == @selector(clearRecentDocuments:)) {
     return ![recentDocumentsController_ recentDocumentPaths].empty();
   }
@@ -1040,6 +1138,84 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (void)documentInteractionControllerUpdateCurrentPageFromScrollForContext:(PDFTabContext*)context {
   [self updateCurrentPageFromScrollForContext:context];
+}
+
+- (BOOL)documentInteractionControllerPerformSelectionAutoScrollForContext:(PDFTabContext*)context
+                                                                   deltaY:(CGFloat)deltaY {
+  if (context == nil) {
+    return NO;
+  }
+
+  NSClipView* clipView = [context->scrollView_ contentView];
+  const NSRect visibleBounds = [clipView bounds];
+  const CGFloat maxScrollY =
+      std::max(static_cast<CGFloat>(context->viewModel_.layout_result().document_height) -
+                   visibleBounds.size.height,
+               static_cast<CGFloat>(0.0));
+  const CGFloat targetOriginY =
+      std::min(std::max(visibleBounds.origin.y + deltaY, 0.0), maxScrollY);
+  if (std::abs(targetOriginY - visibleBounds.origin.y) < 0.5f) {
+    return NO;
+  }
+
+  suppressScrollTracking_ = YES;
+  [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
+  [context->scrollView_ reflectScrolledClipView:clipView];
+  suppressScrollTracking_ = NO;
+  [self updateCurrentPageFromScrollForContext:context];
+  [self updateVisiblePagesForContext:context];
+  return YES;
+}
+
+- (void)documentInteractionControllerUpdateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
+                                                                   context:(PDFTabContext*)context {
+  [textSelectionController_ refreshTextSelectionAtDocumentLocation:documentLocation
+                                                           context:context];
+}
+
+- (void)pageViewHostDidBeginTextSelectionAtPageIndex:(int)pageIndex location:(NSPoint)location {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![self isContextActive:context]) {
+    return;
+  }
+
+  [interactionController_ stopSelectionAutoScroll];
+  [interactionController_ cancelInteractiveRendering];
+  const int charIndex = [textSelectionController_ textIndexForPageSelectionAtPageIndex:pageIndex
+                                                                               location:location
+                                                                                context:context];
+  [context beginTextSelectionOnPageIndex:pageIndex charIndex:charIndex];
+}
+
+- (void)pageViewHostDidDoubleClickTextAtPageIndex:(int)pageIndex location:(NSPoint)location {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  [interactionController_ stopSelectionAutoScroll];
+  [interactionController_ cancelInteractiveRendering];
+  [textSelectionController_ selectWordAtPageIndex:pageIndex
+                                         location:location
+                                          context:context];
+}
+
+- (void)pageViewHostDidRequestContextMenuAtPageIndex:(int)pageIndex
+                                            location:(NSPoint)location
+                                               event:(NSEvent*)event {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![context selectionContainsPageIndex:pageIndex location:location]) {
+    return;
+  }
+  [self showSelectionContextMenuWithEvent:event];
+}
+
+- (void)pageViewHostDidUpdateTextSelectionAtDocumentLocation:(NSPoint)location {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  [self updateTextSelectionAtDocumentLocation:location context:context];
+}
+
+- (void)pageViewHostDidEndTextSelectionAtDocumentLocation:(NSPoint)location {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  [self updateTextSelectionAtDocumentLocation:location context:context];
+  [interactionController_ stopSelectionAutoScroll];
+  [context endTextSelection];
 }
 
 @end

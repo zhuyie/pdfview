@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/document_view_model.h"
+#include "core/text_selection.h"
 #include "mac/page_view_host.h"
 
 struct PageRenderCacheEntry {
@@ -29,11 +30,13 @@ struct PageRenderCacheEntry {
   PDFPageViewHost* pageViewHost_;
   std::vector<PageRenderCacheEntry> pageCache_;
   pdfview::core::RenderPlanFingerprint lastRenderPlanFingerprint_;
+  pdfview::core::TextSelectionState textSelection_;
 }
 
 - (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document
                             path:(const std::string&)path
-                           frame:(NSRect)frame;
+                           frame:(NSRect)frame
+                        delegate:(id<PDFPageViewHostDelegate>)delegate;
 - (NSString*)tabTitle;
 - (void)invalidateRenderedPages;
 - (BOOL)isRenderRequestCurrent:(int)pageIndex
@@ -54,5 +57,17 @@ struct PageRenderCacheEntry {
                                 renderScale:(float)renderScale;
 - (void)rememberVisibleUpdateForCachePlan:(const pdfview::core::PageCachePlan&)cachePlan
                               renderScale:(float)renderScale;
+- (void)beginTextSelectionOnPageIndex:(int)pageIndex charIndex:(int)charIndex;
+- (void)setTextSelectionAnchorPageIndex:(int)pageIndex charIndex:(int)charIndex;
+- (void)updateTextSelectionWithFocusPageIndex:(int)pageIndex
+                                    charIndex:(int)charIndex
+                                         text:(const std::string&)text
+                                        spans:(const std::vector<pdfview::core::PageTextSelectionSpan>&)spans;
+- (void)endTextSelection;
+- (void)clearTextSelection;
+- (void)syncTextSelectionOverlay;
+- (BOOL)hasSelectedText;
+- (NSString*)selectedText;
+- (BOOL)selectionContainsPageIndex:(int)pageIndex location:(NSPoint)location;
 
 @end

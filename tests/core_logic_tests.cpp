@@ -8,6 +8,7 @@
 #include "core/document_paths.h"
 #include "core/page_cache.h"
 #include "core/recent_documents.h"
+#include "core/text_selection.h"
 #include "core/viewer_layout.h"
 #include "core/viewport.h"
 
@@ -28,7 +29,9 @@ bool Expect(bool condition, const char* message) {
 class FakeDocument : public pdfview::core::Document {
  public:
   explicit FakeDocument(const std::vector<pdfview::core::PageSize>& page_sizes)
-      : page_sizes_(page_sizes) {}
+      : page_sizes_(page_sizes),
+        page_char_counts_(page_sizes.size(), 0),
+        page_range_selections_(page_sizes.size()) {}
 
   int page_count() const override { return static_cast<int>(page_sizes_.size()); }
 
@@ -43,8 +46,61 @@ class FakeDocument : public pdfview::core::Document {
     return pdfview::core::RenderPageResult();
   }
 
+  int text_index_at_point(int, float, float, float, float) const override {
+    return -1;
+  }
+
+  int nearest_text_index_at_point(int, float, float) const override {
+    return -1;
+  }
+
+  int page_text_char_count(int page_index) const override {
+    if (page_index < 0 || page_index >= static_cast<int>(page_sizes_.size())) {
+      return 0;
+    }
+    return page_char_counts_[page_index];
+  }
+
+  pdfview::core::PageTextSelection text_selection_for_range(int page_index,
+                                                            int start_index,
+                                                            int count) const override {
+    if (page_index < 0 || page_index >= static_cast<int>(page_range_selections_.size())) {
+      return pdfview::core::PageTextSelection();
+    }
+    for (size_t selection_index = 0; selection_index < page_range_selections_[page_index].size();
+         ++selection_index) {
+      const pdfview::core::PageTextSelection& selection =
+          page_range_selections_[page_index][selection_index];
+      if (selection.start_index == start_index && selection.count == count) {
+        return selection;
+      }
+    }
+    return pdfview::core::PageTextSelection();
+  }
+
+  pdfview::core::PageTextSelection word_selection_at_index(int, int) const override {
+    return pdfview::core::PageTextSelection();
+  }
+
+  void set_page_text_char_count(int page_index, int count) {
+    if (page_index < 0 || page_index >= static_cast<int>(page_char_counts_.size())) {
+      return;
+    }
+    page_char_counts_[page_index] = count;
+  }
+
+  void add_page_range_selection(const pdfview::core::PageTextSelection& selection) {
+    if (selection.page_index < 0 ||
+        selection.page_index >= static_cast<int>(page_range_selections_.size())) {
+      return;
+    }
+    page_range_selections_[selection.page_index].push_back(selection);
+  }
+
  private:
   std::vector<pdfview::core::PageSize> page_sizes_;
+  std::vector<int> page_char_counts_;
+  std::vector<std::vector<pdfview::core::PageTextSelection> > page_range_selections_;
 };
 
 bool TestComputeFitScale() {
@@ -233,6 +289,277 @@ bool TestRenderPlanFingerprint() {
   return Expect(matches_same, "matching cache plans should hit the same fingerprint") &&
          Expect(rejects_other_scale, "fingerprints should include render scale") &&
          Expect(rejects_other_keep, "fingerprints should include keep range");
+}
+
+bool TestMakeTextCharRange() {
+  const pdfview::core::TextCharRange forward = pdfview::core::make_text_char_range(2, 6);
+  const pdfview::core::TextCharRange backward = pdfview::core::make_text_char_range(6, 2);
+  const pdfview::core::TextCharRange empty = pdfview::core::make_text_char_range(3, 3);
+
+  return Expect(forward.start_index == 2 && forward.count == 5,
+                "forward drag should include both endpoints") &&
+         Expect(backward.start_index == 2 && backward.count == 5,
+                "backward drag should normalize to the same range") &&
+         Expect(empty.empty(), "same-character drag should not create a visible selection");
+}
+
+bool TestMakeTextSelectionRange() {
+  pdfview::core::TextSelectionEndpoint anchor;
+  anchor.page_index = 3;
+  anchor.char_index = 4;
+  pdfview::core::TextSelectionEndpoint focus;
+  focus.page_index = 1;
+  focus.char_index = 9;
+
+  const pdfview::core::TextSelectionRange range =
+      pdfview::core::make_text_selection_range(anchor, focus);
+
+  return Expect(range.start.page_index == 1 && range.start.char_index == 9,
+                "multi-page selection range should normalize the earlier endpoint first") &&
+         Expect(range.end.page_index == 3 && range.end.char_index == 4,
+                "multi-page selection range should keep the later endpoint second");
+}
+
+bool TestBuildDocumentTextSelection() {
+  std::vector<pdfview::core::PageSize> page_sizes(3);
+  FakeDocument document(page_sizes);
+  document.set_page_text_char_count(0, 6);
+  document.set_page_text_char_count(1, 5);
+  document.set_page_text_char_count(2, 4);
+
+  pdfview::core::PageTextSelection first_page_selection;
+  first_page_selection.page_index = 0;
+  first_page_selection.start_index = 2;
+  first_page_selection.count = 4;
+  first_page_selection.text = "cdef";
+  first_page_selection.rects.resize(1);
+  document.add_page_range_selection(first_page_selection);
+
+  pdfview::core::PageTextSelection second_page_selection;
+  second_page_selection.page_index = 1;
+  second_page_selection.start_index = 0;
+  second_page_selection.count = 5;
+  second_page_selection.text = "ghijk";
+  second_page_selection.rects.resize(1);
+  document.add_page_range_selection(second_page_selection);
+
+  pdfview::core::PageTextSelection third_page_selection;
+  third_page_selection.page_index = 2;
+  third_page_selection.start_index = 0;
+  third_page_selection.count = 2;
+  third_page_selection.text = "lm";
+  third_page_selection.rects.resize(1);
+  document.add_page_range_selection(third_page_selection);
+
+  pdfview::core::TextSelectionEndpoint anchor;
+  anchor.page_index = 0;
+  anchor.char_index = 2;
+  pdfview::core::TextSelectionEndpoint focus;
+  focus.page_index = 2;
+  focus.char_index = 1;
+
+  const pdfview::core::DocumentTextSelection selection =
+      pdfview::core::build_document_text_selection(
+          document, pdfview::core::make_text_selection_range(anchor, focus));
+
+  return Expect(selection.text == "cdef\nghijk\nlm",
+                "document text selection should join per-page text with line breaks") &&
+         Expect(selection.spans.size() == 3,
+                "document text selection should keep one span per selected page") &&
+         Expect(selection.spans[0].page_index == 0 && selection.spans[2].page_index == 2,
+                "document text selection should preserve page order");
+}
+
+bool TestResolveDocumentSelectionPoint() {
+  std::vector<pdfview::core::ViewRect> page_frames(2);
+  page_frames[0].x = 20.0f;
+  page_frames[0].y = 40.0f;
+  page_frames[0].width = 100.0f;
+  page_frames[0].height = 200.0f;
+  page_frames[1].x = 10.0f;
+  page_frames[1].y = 280.0f;
+  page_frames[1].width = 120.0f;
+  page_frames[1].height = 160.0f;
+
+  int page_index = -1;
+  float page_x = 0.0f;
+  float page_y = 0.0f;
+  const bool resolved = pdfview::core::resolve_document_selection_point(
+      75.0f, 120.0f, page_frames, &page_index, &page_x, &page_y);
+  const bool rejected = !pdfview::core::resolve_document_selection_point(
+      5.0f, 10.0f, page_frames, &page_index, &page_x, &page_y);
+
+  return Expect(resolved, "document point inside a page should resolve") &&
+         Expect(page_index == 0, "document point should resolve to the matching page index") &&
+         Expect(NearlyEqual(page_x, 55.0f) && NearlyEqual(page_y, 80.0f),
+                "document point should convert to page-local coordinates") &&
+         Expect(rejected, "document point outside all pages should not resolve");
+}
+
+bool TestResolveDocumentSelectionFallback() {
+  std::vector<pdfview::core::PageSize> page_sizes(3);
+  FakeDocument document(page_sizes);
+  document.set_page_text_char_count(0, 4);
+  document.set_page_text_char_count(1, 0);
+  document.set_page_text_char_count(2, 6);
+
+  std::vector<pdfview::core::ViewRect> page_frames(3);
+  page_frames[0].y = 20.0f;
+  page_frames[0].height = 200.0f;
+  page_frames[1].y = 260.0f;
+  page_frames[1].height = 200.0f;
+  page_frames[2].y = 500.0f;
+  page_frames[2].height = 200.0f;
+
+  int forward_page_index = -1;
+  int forward_char_index = -1;
+  const bool forward = pdfview::core::resolve_document_selection_fallback(
+      470.0f, 0, page_frames, document, &forward_page_index, &forward_char_index);
+  int backward_page_index = -1;
+  int backward_char_index = -1;
+  const bool backward = pdfview::core::resolve_document_selection_fallback(
+      10.0f, 2, page_frames, document, &backward_page_index, &backward_char_index);
+
+  return Expect(forward && forward_page_index == 2 && forward_char_index == 0,
+                "forward fallback should snap to the next page start with text") &&
+         Expect(backward && backward_page_index == 0 && backward_char_index == 3,
+                "backward fallback should snap to the previous page end with text");
+}
+
+bool TestPageTextRectsToPageViewRects() {
+  pdfview::core::PageSize page_size;
+  page_size.width = 100.0f;
+  page_size.height = 200.0f;
+
+  pdfview::core::ViewRect page_frame;
+  page_frame.width = 200.0f;
+  page_frame.height = 400.0f;
+
+  std::vector<pdfview::core::PageTextRect> text_rects(1);
+  text_rects[0].left = 10.0f;
+  text_rects[0].right = 50.0f;
+  text_rects[0].top = 180.0f;
+  text_rects[0].bottom = 160.0f;
+
+  const std::vector<pdfview::core::ViewRect> view_rects =
+      pdfview::core::page_text_rects_to_page_view_rects(text_rects, page_size, page_frame);
+
+  return Expect(view_rects.size() == 1, "text rect conversion should preserve valid rects") &&
+         Expect(NearlyEqual(view_rects[0].x, 20.0f), "converted text rect x is incorrect") &&
+         Expect(NearlyEqual(view_rects[0].y, 40.0f), "converted text rect y is incorrect") &&
+         Expect(NearlyEqual(view_rects[0].width, 80.0f), "converted text rect width is incorrect") &&
+         Expect(NearlyEqual(view_rects[0].height, 40.0f), "converted text rect height is incorrect");
+}
+
+bool TestWordCharRangeFromText() {
+  std::vector<unsigned int> codepoints;
+  codepoints.push_back('a');
+  codepoints.push_back('l');
+  codepoints.push_back('p');
+  codepoints.push_back('h');
+  codepoints.push_back('a');
+  codepoints.push_back(' ');
+  codepoints.push_back('b');
+  codepoints.push_back('e');
+  codepoints.push_back('t');
+  codepoints.push_back('a');
+
+  const pdfview::core::TextCharRange alpha =
+      pdfview::core::word_char_range_from_text(codepoints, 2);
+  const pdfview::core::TextCharRange beta =
+      pdfview::core::word_char_range_from_text(codepoints, 7);
+  const pdfview::core::TextCharRange gap =
+      pdfview::core::word_char_range_from_text(codepoints, 5);
+  std::vector<unsigned int> symbol_codepoints;
+  symbol_codepoints.push_back('$');
+  symbol_codepoints.push_back('+');
+  symbol_codepoints.push_back('+');
+  symbol_codepoints.push_back(' ');
+  symbol_codepoints.push_back('=');
+  const pdfview::core::TextCharRange symbols =
+      pdfview::core::word_char_range_from_text(symbol_codepoints, 1);
+  const pdfview::core::TextCharRange equals =
+      pdfview::core::word_char_range_from_text(symbol_codepoints, 4);
+  std::vector<unsigned int> cjk_codepoints;
+  cjk_codepoints.push_back(0x4F60);
+  cjk_codepoints.push_back(0x597D);
+  cjk_codepoints.push_back(0xFF0C);
+  cjk_codepoints.push_back(0x4E16);
+  cjk_codepoints.push_back(0x754C);
+  const pdfview::core::TextCharRange cjk =
+      pdfview::core::word_char_range_from_text(cjk_codepoints, 1);
+  const pdfview::core::TextCharRange cjk_punctuation =
+      pdfview::core::word_char_range_from_text(cjk_codepoints, 2);
+  const pdfview::core::TextCharRange cjk_after_punctuation =
+      pdfview::core::word_char_range_from_text(cjk_codepoints, 3);
+  std::vector<unsigned int> adjacent_cjk_punctuation;
+  adjacent_cjk_punctuation.push_back(0xFF09);
+  adjacent_cjk_punctuation.push_back(0xFF1A);
+  const pdfview::core::TextCharRange adjacent_cjk_punctuation_range =
+      pdfview::core::word_char_range_from_text(adjacent_cjk_punctuation, 0);
+
+  return Expect(alpha.start_index == 0 && alpha.count == 5,
+                "word range should expand to the full leading word") &&
+         Expect(beta.start_index == 6 && beta.count == 4,
+                "word range should expand to the full trailing word") &&
+         Expect(gap.empty(), "word range should stay empty on whitespace") &&
+         Expect(symbols.start_index == 0 && symbols.count == 3,
+                "ASCII punctuation should expand across adjacent symbol runs") &&
+         Expect(equals.start_index == 4 && equals.count == 1,
+                "standalone ASCII symbols should still be selectable") &&
+         Expect(cjk.start_index == 0 && cjk.count == 2,
+                "CJK text should expand until punctuation boundaries") &&
+         Expect(cjk_punctuation.start_index == 2 && cjk_punctuation.count == 1,
+                "CJK punctuation should be selectable as its own token") &&
+         Expect(adjacent_cjk_punctuation_range.start_index == 0 &&
+                    adjacent_cjk_punctuation_range.count == 1,
+                "adjacent CJK punctuation marks should not merge into one selection") &&
+         Expect(cjk_after_punctuation.start_index == 3 && cjk_after_punctuation.count == 2,
+                "CJK punctuation should break non-ASCII word expansion");
+}
+
+bool TestThinTextRectsStayVisible() {
+  pdfview::core::PageSize page_size;
+  page_size.width = 100.0f;
+  page_size.height = 200.0f;
+
+  pdfview::core::ViewRect page_frame;
+  page_frame.width = 100.0f;
+  page_frame.height = 200.0f;
+
+  std::vector<pdfview::core::PageTextRect> text_rects(1);
+  text_rects[0].left = 10.0f;
+  text_rects[0].right = 11.0f;
+  text_rects[0].top = 180.0f;
+  text_rects[0].bottom = 160.0f;
+
+  const std::vector<pdfview::core::ViewRect> view_rects =
+      pdfview::core::page_text_rects_to_page_view_rects(text_rects, page_size, page_frame);
+
+  return Expect(view_rects.size() == 1, "thin text rect conversion should keep valid rects") &&
+         Expect(NearlyEqual(view_rects[0].width, 5.0f), "thin text rects should get a minimum visible width");
+}
+
+bool TestThinHorizontalTextRectsStayVisible() {
+  pdfview::core::PageSize page_size;
+  page_size.width = 100.0f;
+  page_size.height = 200.0f;
+
+  pdfview::core::ViewRect page_frame;
+  page_frame.width = 100.0f;
+  page_frame.height = 200.0f;
+
+  std::vector<pdfview::core::PageTextRect> text_rects(1);
+  text_rects[0].left = 10.0f;
+  text_rects[0].right = 20.0f;
+  text_rects[0].top = 180.0f;
+  text_rects[0].bottom = 179.0f;
+
+  const std::vector<pdfview::core::ViewRect> view_rects =
+      pdfview::core::page_text_rects_to_page_view_rects(text_rects, page_size, page_frame);
+
+  return Expect(view_rects.size() == 1, "thin horizontal rect conversion should keep valid rects") &&
+         Expect(NearlyEqual(view_rects[0].height, 5.0f), "thin horizontal rects should get a minimum visible height");
 }
 
 bool TestRecentDocumentDeduplication() {
@@ -601,6 +928,33 @@ int main() {
     return 1;
   }
   if (!TestRenderPlanFingerprint()) {
+    return 1;
+  }
+  if (!TestMakeTextCharRange()) {
+    return 1;
+  }
+  if (!TestMakeTextSelectionRange()) {
+    return 1;
+  }
+  if (!TestBuildDocumentTextSelection()) {
+    return 1;
+  }
+  if (!TestResolveDocumentSelectionPoint()) {
+    return 1;
+  }
+  if (!TestResolveDocumentSelectionFallback()) {
+    return 1;
+  }
+  if (!TestPageTextRectsToPageViewRects()) {
+    return 1;
+  }
+  if (!TestWordCharRangeFromText()) {
+    return 1;
+  }
+  if (!TestThinTextRectsStayVisible()) {
+    return 1;
+  }
+  if (!TestThinHorizontalTextRectsStayVisible()) {
     return 1;
   }
   if (!TestRecentDocumentDeduplication()) {
