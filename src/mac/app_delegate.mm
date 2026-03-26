@@ -93,6 +93,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFTabContext* interactiveRenderContext_;
   BOOL suppressScrollTracking_;
   id keyMonitor_;
+  id mouseMonitor_;
   int argc_;
   const char** argv_;
 }
@@ -103,6 +104,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     argc_ = argc;
     argv_ = argv;
     keyMonitor_ = nil;
+    mouseMonitor_ = nil;
     recentDocumentsController_ = [[PDFRecentDocumentsController alloc] initWithDelegate:self];
     workspaceController_ = nil;
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
@@ -1013,6 +1015,30 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
     return event;
   }];
+
+  mouseMonitor_ =
+      [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown |
+                                                     NSEventMaskRightMouseDown |
+                                                     NSEventMaskOtherMouseDown
+                                            handler:^NSEvent*(NSEvent* event) {
+    if (toolbarStrip_ == nil || ![toolbarStrip_ ownsFirstResponder:[window_ firstResponder]]) {
+      return event;
+    }
+
+    NSWindow* eventWindow = [event window];
+    if (eventWindow != window_) {
+      [toolbarStrip_ cancelZoomEditing];
+      return event;
+    }
+
+    const NSPoint locationInWindow = [event locationInWindow];
+    const NSPoint locationInToolbar = [toolbarStrip_ convertPoint:locationInWindow fromView:nil];
+    if (![toolbarStrip_ mouse:locationInToolbar inRect:[toolbarStrip_ bounds]]) {
+      [toolbarStrip_ cancelZoomEditing];
+    }
+
+    return event;
+  }];
 }
 
 - (CGFloat)deviceScaleFactor {
@@ -1060,6 +1086,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (keyMonitor_ != nil) {
     [NSEvent removeMonitor:keyMonitor_];
     keyMonitor_ = nil;
+  }
+  if (mouseMonitor_ != nil) {
+    [NSEvent removeMonitor:mouseMonitor_];
+    mouseMonitor_ = nil;
   }
 }
 

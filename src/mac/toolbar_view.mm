@@ -111,21 +111,21 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
                                                 @"Zoom to 100%");
     [self addSubview:zoomActualButton_];
 
-    fitWidthButton_ = MakeToolbarSymbolButton(NSMakeRect(226, 4, 32, 22),
-                                              @"arrow.left.and.right.righttriangle.left.righttriangle.right",
-                                              @"Width",
-                                              self,
-                                              @selector(fitWidth:),
-                                              @"Fit Width");
-    [self addSubview:fitWidthButton_];
-
-    fitPageButton_ = MakeToolbarSymbolButton(NSMakeRect(270, 4, 32, 22),
+    fitPageButton_ = MakeToolbarSymbolButton(NSMakeRect(226, 4, 32, 22),
                                              @"document",
                                              @"Page",
                                              self,
                                              @selector(fitPage:),
                                              @"Fit Page");
     [self addSubview:fitPageButton_];
+
+    fitWidthButton_ = MakeToolbarSymbolButton(NSMakeRect(270, 4, 32, 22),
+                                              @"arrow.left.and.right",
+                                              @"Width",
+                                              self,
+                                              @selector(fitWidth:),
+                                              @"Fit Width");
+    [self addSubview:fitWidthButton_];
 
     [self showEmptyState];
   }
@@ -161,6 +161,15 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
   [fitPageButton_ setEnabled:YES];
   [fitWidthButton_ setState:fitWidthActive ? NSControlStateValueOn : NSControlStateValueOff];
   [fitPageButton_ setState:fitPageActive ? NSControlStateValueOn : NSControlStateValueOff];
+}
+
+- (void)cancelZoomEditing {
+  if (![self ownsFirstResponder:[[self window] firstResponder]]) {
+    return;
+  }
+
+  zoomComboBoxEditing_ = NO;
+  [[self window] makeFirstResponder:nil];
 }
 
 - (BOOL)isEditingZoomField {
@@ -218,7 +227,7 @@ NSButton* MakeToolbarSymbolButton(NSRect frame,
   }
 
   if (commandSelector == @selector(cancelOperation:)) {
-    zoomComboBoxEditing_ = NO;
+    [self cancelZoomEditing];
     return YES;
   }
 

@@ -22,6 +22,7 @@
                   maximumScale:(float)maximumScale
                 fitWidthActive:(BOOL)fitWidthActive
                  fitPageActive:(BOOL)fitPageActive;
+- (void)cancelZoomEditing;
 - (BOOL)isEditingZoomField;
 - (BOOL)ownsFirstResponder:(NSResponder*)responder;
 
