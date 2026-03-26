@@ -7,6 +7,7 @@
 
 #include "core/profiling.h"
 #include "core/document.h"
+#include "mac/document_drop_view.h"
 #include "mac/document_workspace_controller.h"
 #include "mac/page_indicator_view.h"
 #include "mac/recent_documents_controller.h"
@@ -29,7 +30,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate, PDFDocumentDropViewDelegate>
 - (void)installMainMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
@@ -41,6 +42,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (CGFloat)deviceScaleFactor;
 - (void)loadInitialDocuments;
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive;
+- (void)openDocumentPaths:(NSArray<NSString*>*)paths;
 - (void)renderTabContext:(PDFTabContext*)context;
 - (void)updateScrollerVisibilityForContext:(PDFTabContext*)context;
 - (void)updateVisiblePagesForContext:(PDFTabContext*)context;
@@ -278,10 +280,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   tabBarView_ = [[PDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, 100, 34) delegate:self];
   [contentView addSubview:tabBarView_];
 
-  contentHostView_ = [[NSView alloc] initWithFrame:[contentView bounds]];
+  contentHostView_ = [[PDFDocumentDropView alloc] initWithFrame:[contentView bounds] delegate:self];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-  [contentHostView_ setWantsLayer:YES];
-  [[contentHostView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] CGColor]];
   [contentView addSubview:contentHostView_ positioned:NSWindowBelow relativeTo:tabBarView_];
   workspaceController_ = [[PDFDocumentWorkspaceController alloc] initWithHostView:contentHostView_
                                                                           delegate:self];
@@ -416,6 +416,20 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 }
 
+- (void)openDocumentPaths:(NSArray<NSString*>*)paths {
+  if (paths == nil || [paths count] == 0) {
+    return;
+  }
+
+  for (NSUInteger index = 0; index < [paths count]; ++index) {
+    NSString* path = [paths objectAtIndex:index];
+    if (path == nil || [path length] == 0) {
+      continue;
+    }
+    [self openDocumentAtPath:[path UTF8String] makeActive:index + 1 == [paths count]];
+  }
+}
+
 - (void)openDocumentAtPath:(const std::string&)path makeActive:(BOOL)makeActive {
   PDFTabContext* existingContext = [workspaceController_ contextForDocumentPath:path];
   if (existingContext != nil) {
@@ -471,17 +485,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)startupViewDidRequestOpenDocumentAtPaths:(NSArray<NSString*>*)paths {
-  if (paths == nil || [paths count] == 0) {
-    return;
-  }
-
-  for (NSUInteger index = 0; index < [paths count]; ++index) {
-    NSString* path = [paths objectAtIndex:index];
-    if (path == nil || [path length] == 0) {
-      continue;
-    }
-    [self openDocumentAtPath:[path UTF8String] makeActive:index + 1 == [paths count]];
-  }
+  [self openDocumentPaths:paths];
 }
 
 - (void)startupViewDidRequestOpenRecentDocumentAtIndex:(NSInteger)index {
@@ -540,6 +544,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   [self openDocumentAtPath:[path UTF8String] makeActive:YES];
+}
+
+- (void)documentDropViewDidReceiveDocumentPaths:(NSArray<NSString*>*)paths {
+  [self openDocumentPaths:paths];
 }
 
 - (void)workspaceControllerDidAddContext:(PDFTabContext*)context {

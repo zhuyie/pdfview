@@ -1,5 +1,7 @@
 #import "mac/startup_view.h"
 
+#import "mac/drag_drop_utils.h"
+
 namespace {
 
 constexpr NSInteger kRecentsTitleTag = 1001;
@@ -148,34 +150,7 @@ constexpr CGFloat kMaxVisibleRows = 5.0f;
 }
 
 - (NSArray<NSString*>*)pdfPathsFromDraggingInfo:(id<NSDraggingInfo>)draggingInfo {
-  NSPasteboard* pasteboard = [draggingInfo draggingPasteboard];
-  NSArray<NSURL*>* urls =
-      [pasteboard readObjectsForClasses:[NSArray arrayWithObject:[NSURL class]]
-                                options:@{
-                                  NSPasteboardURLReadingFileURLsOnlyKey : @YES
-                                }];
-  if (urls == nil || [urls count] == 0) {
-    return [NSArray array];
-  }
-
-  NSMutableArray<NSString*>* pdfPaths = [NSMutableArray array];
-  for (NSURL* url in urls) {
-    if (![url isFileURL]) {
-      continue;
-    }
-
-    NSString* path = [url path];
-    if (path == nil) {
-      continue;
-    }
-
-    NSString* pathExtension = [[path pathExtension] lowercaseString];
-    if ([pathExtension isEqualToString:@"pdf"]) {
-      [pdfPaths addObject:path];
-    }
-  }
-
-  return pdfPaths;
+  return PDFViewPDFPathsFromDraggingInfo(draggingInfo);
 }
 
 - (void)setOpenPanelHighlighted:(BOOL)highlighted {
