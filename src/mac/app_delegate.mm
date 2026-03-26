@@ -9,8 +9,8 @@
 #include "core/document.h"
 #include "mac/chrome_metrics.h"
 #include "mac/document_drop_view.h"
+#include "mac/document_interaction_controller.h"
 #include "mac/document_workspace_controller.h"
-#include "mac/page_indicator_view.h"
 #include "mac/recent_documents_controller.h"
 #include "mac/render_coordinator.h"
 #include "mac/startup_view.h"
@@ -31,7 +31,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate, PDFDocumentDropViewDelegate>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFToolbarViewDelegate, PDFRecentDocumentsControllerDelegate, PDFDocumentWorkspaceControllerDelegate, PDFDocumentDropViewDelegate, PDFDocumentInteractionControllerDelegate>
 - (void)installMainMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
@@ -51,9 +51,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (CGFloat)effectiveDeviceScaleForContext:(PDFTabContext*)context;
 - (BOOL)shouldReduceInteractiveScaleForContext:(PDFTabContext*)context
                                    deviceScale:(CGFloat)deviceScale;
-- (void)beginInteractiveRenderingForContext:(PDFTabContext*)context;
-- (void)endInteractiveRendering:(NSTimer*)timer;
-- (void)cancelInteractiveRendering;
 - (void)applyScaleChangeForContext:(PDFTabContext*)context
                         invalidate:(BOOL)invalidateRenderedPages
                         updateMode:(void (^)(PDFTabContext* context))updateMode;
@@ -70,9 +67,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)scrollToCurrentPageInContext:(PDFTabContext*)context;
 - (void)scrollActiveContextByViewportDelta:(CGFloat)deltaY;
 - (void)updateCurrentPageFromScrollForContext:(PDFTabContext*)context;
-- (void)showPageIndicatorForContext:(PDFTabContext*)context;
-- (void)hidePageIndicator:(NSTimer*)timer;
-- (void)ensurePageIndicatorAttachedToContext:(PDFTabContext*)context;
 - (void)installKeyMonitor;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
@@ -87,13 +81,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSView* contentHostView_;
   PDFStartupView* startupView_;
   PDFToolbarView* toolbarStrip_;
-  PDFPageIndicatorView* pageIndicatorView_;
   PDFRecentDocumentsController* recentDocumentsController_;
   PDFDocumentWorkspaceController* workspaceController_;
+  PDFDocumentInteractionController* interactionController_;
   PDFRenderCoordinator* renderCoordinator_;
-  NSTimer* interactiveRenderTimer_;
-  NSTimer* pageIndicatorTimer_;
-  PDFTabContext* interactiveRenderContext_;
   BOOL suppressScrollTracking_;
   id keyMonitor_;
   id mouseMonitor_;
@@ -110,10 +101,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     mouseMonitor_ = nil;
     recentDocumentsController_ = [[PDFRecentDocumentsController alloc] initWithDelegate:self];
     workspaceController_ = nil;
+    interactionController_ = [[PDFDocumentInteractionController alloc] initWithDelegate:self];
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
-    interactiveRenderTimer_ = nil;
-    pageIndicatorTimer_ = nil;
-    interactiveRenderContext_ = nil;
     suppressScrollTracking_ = NO;
   }
   return self;
@@ -490,7 +479,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)tabStripViewDidSelectTabAtIndex:(NSInteger)index {
-  [self cancelInteractiveRendering];
+  [interactionController_ cancelInteractiveRendering];
   [workspaceController_ selectContextAtIndex:index];
 }
 
@@ -550,7 +539,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)workspaceControllerSelectionDidChange:(PDFTabContext*)context {
-  [self hidePageIndicator:nil];
+  [interactionController_ hidePageIndicator];
   if (context == nil) {
     [window_ setTitle:@"PDFView"];
     [self layoutChrome];
@@ -599,50 +588,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 - (BOOL)shouldReduceInteractiveScaleForContext:(PDFTabContext*)context
                                    deviceScale:(CGFloat)deviceScale {
-  if (context == nil || context != interactiveRenderContext_) {
-    return NO;
-  }
-  return context->viewModel_.should_reduce_interactive_scale(static_cast<float>(deviceScale));
-}
-
-- (void)beginInteractiveRenderingForContext:(PDFTabContext*)context {
-  if (context == nil) {
-    return;
-  }
-
-  interactiveRenderContext_ = context;
-  if (interactiveRenderTimer_ != nil) {
-    [interactiveRenderTimer_ invalidate];
-    interactiveRenderTimer_ = nil;
-  }
-  interactiveRenderTimer_ =
-      [NSTimer scheduledTimerWithTimeInterval:PDFInteractiveRenderDebounceInterval()
-                                       target:self
-                                     selector:@selector(endInteractiveRendering:)
-                                     userInfo:nil
-                                      repeats:NO];
-  [[NSRunLoop mainRunLoop] addTimer:interactiveRenderTimer_ forMode:NSRunLoopCommonModes];
-}
-
-- (void)endInteractiveRendering:(NSTimer*)timer {
-  if (timer != interactiveRenderTimer_) {
-    return;
-  }
-
-  interactiveRenderTimer_ = nil;
-  PDFTabContext* context = interactiveRenderContext_;
-  interactiveRenderContext_ = nil;
-  if ([self isContextActive:context]) {
-    [self updateVisiblePagesForContext:context];
-  }
-}
-
-- (void)cancelInteractiveRendering {
-  if (interactiveRenderTimer_ != nil) {
-    [interactiveRenderTimer_ invalidate];
-    interactiveRenderTimer_ = nil;
-  }
-  interactiveRenderContext_ = nil;
+  return [interactionController_ shouldReduceInteractiveScaleForContext:context
+                                                            deviceScale:deviceScale];
 }
 
 - (void)applyScaleChangeForContext:(PDFTabContext*)context
@@ -652,7 +599,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
+  [interactionController_ cancelInteractiveRendering];
   [self updateCurrentPageFromScrollForContext:context];
 
   const NSRect visibleBounds = [[context->scrollView_ contentView] bounds];
@@ -866,12 +813,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
+  [interactionController_ cancelInteractiveRendering];
   [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
   [context->scrollView_ reflectScrolledClipView:clipView];
   [self updateCurrentPageFromScrollForContext:context];
-  [self showPageIndicatorForContext:context];
-  [self beginInteractiveRenderingForContext:context];
+  [interactionController_ showPageIndicatorForContext:context];
+  [interactionController_ beginInteractiveRenderingForContext:context];
   [self updateVisiblePagesForContext:context];
 }
 
@@ -880,7 +827,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  [self cancelInteractiveRendering];
+  [interactionController_ cancelInteractiveRendering];
   const pdfview::core::ViewRect pageRect = context->viewModel_.current_page_rect();
   if (pageRect.width <= 0.0f || pageRect.height <= 0.0f) {
     return;
@@ -894,7 +841,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   context->viewModel_.set_scroll_origin([[context->scrollView_ contentView] bounds].origin.x,
                                         [[context->scrollView_ contentView] bounds].origin.y);
   context->viewModel_.update_current_page_from_scroll();
-  [self showPageIndicatorForContext:context];
+  [interactionController_ showPageIndicatorForContext:context];
   [self updateVisiblePagesForContext:context];
   suppressScrollTracking_ = NO;
 }
@@ -909,68 +856,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   context->viewModel_.update_current_page_from_scroll();
 }
 
-- (void)ensurePageIndicatorAttachedToContext:(PDFTabContext*)context {
-  if (context == nil) {
-    return;
-  }
-
-  if (pageIndicatorView_ == nil) {
-    pageIndicatorView_ = [[PDFPageIndicatorView alloc] initWithFrame:NSMakeRect(0, 0, 88, 30)];
-  }
-
-  if ([pageIndicatorView_ superview] != context->containerView_) {
-    [pageIndicatorView_ removeFromSuperview];
-    [context->containerView_ addSubview:pageIndicatorView_ positioned:NSWindowAbove relativeTo:context->scrollView_];
-  }
-}
-
-- (void)showPageIndicatorForContext:(PDFTabContext*)context {
-  if (context == nil || ![self isContextActive:context] || context->viewModel_.page_count() <= 0) {
-    return;
-  }
-
-  [self ensurePageIndicatorAttachedToContext:context];
-
-  NSString* text =
-      [NSString stringWithUTF8String:context->viewModel_.page_indicator_text().c_str()];
-  [pageIndicatorView_ updateWithText:text
-                      containerBounds:[context->containerView_ bounds]
-                 hasHorizontalScroller:[context->scrollView_ hasHorizontalScroller]];
-  [pageIndicatorView_ setHidden:NO];
-
-  if (pageIndicatorTimer_ != nil) {
-    [pageIndicatorTimer_ invalidate];
-    pageIndicatorTimer_ = nil;
-  }
-  pageIndicatorTimer_ =
-      [NSTimer scheduledTimerWithTimeInterval:1.8
-                                       target:self
-                                     selector:@selector(hidePageIndicator:)
-                                     userInfo:nil
-                                      repeats:NO];
-  [[NSRunLoop mainRunLoop] addTimer:pageIndicatorTimer_ forMode:NSRunLoopCommonModes];
-}
-
-- (void)hidePageIndicator:(NSTimer*)timer {
-  if (timer != nil && timer != pageIndicatorTimer_) {
-    return;
-  }
-  if (pageIndicatorTimer_ != nil) {
-    [pageIndicatorTimer_ invalidate];
-    pageIndicatorTimer_ = nil;
-  }
-  [pageIndicatorView_ setHidden:YES];
-}
-
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
-  if (suppressScrollTracking_) {
-    return;
-  }
   PDFTabContext* context = [workspaceController_ contextForClipView:(NSClipView*)[notification object]];
-  [self updateCurrentPageFromScrollForContext:context];
-  [self showPageIndicatorForContext:context];
-  [self beginInteractiveRenderingForContext:context];
-  [self updateVisiblePagesForContext:context];
+  [interactionController_ handleClipViewDidScrollForContext:context
+                                      suppressScrollTracking:suppressScrollTracking_];
 }
 
 - (void)installKeyMonitor {
@@ -1083,8 +972,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   (void)notification;
   pdfview::core::flush_render_profile_summary();
   [[NSNotificationCenter defaultCenter] removeObserver:self];
-  [self cancelInteractiveRendering];
-  [self hidePageIndicator:nil];
+  [interactionController_ cancelInteractiveRendering];
+  [interactionController_ hidePageIndicator];
   if (keyMonitor_ != nil) {
     [NSEvent removeMonitor:keyMonitor_];
     keyMonitor_ = nil;
@@ -1120,6 +1009,18 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   return YES;
+}
+
+- (BOOL)documentInteractionControllerIsContextActive:(PDFTabContext*)context {
+  return [self isContextActive:context];
+}
+
+- (void)documentInteractionControllerUpdateVisiblePagesForContext:(PDFTabContext*)context {
+  [self updateVisiblePagesForContext:context];
+}
+
+- (void)documentInteractionControllerUpdateCurrentPageFromScrollForContext:(PDFTabContext*)context {
+  [self updateCurrentPageFromScrollForContext:context];
 }
 
 @end

@@ -99,6 +99,7 @@ if(APPLE)
         src/mac/app_delegate.mm
         src/mac/chrome_metrics.mm
         src/mac/document_drop_view.mm
+        src/mac/document_interaction_controller.mm
         src/mac/document_workspace_controller.mm
         src/mac/drag_drop_utils.mm
         src/mac/image_bridge.mm
