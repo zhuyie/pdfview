@@ -9,66 +9,12 @@
 #include "core/document.h"
 #include "core/document_paths.h"
 #include "core/recent_documents.h"
+#include "mac/page_indicator_view.h"
 #include "mac/render_coordinator.h"
+#include "mac/startup_view.h"
+#include "mac/tab_strip_view.h"
 #include "mac/tab_context.h"
-
-@interface PassiveTextField : NSTextField
-@end
-
-@implementation PassiveTextField
-
-- (NSView*)hitTest:(NSPoint)point {
-  (void)point;
-  return nil;
-}
-
-@end
-
-@interface PassiveLabel : NSTextField
-@end
-
-@implementation PassiveLabel
-
-- (NSView*)hitTest:(NSPoint)point {
-  (void)point;
-  return nil;
-}
-
-@end
-
-@interface EdgeFadeView : NSView
-- (instancetype)initWithLeadingEdge:(BOOL)isLeadingEdge;
-@end
-
-@implementation EdgeFadeView {
-  BOOL isLeadingEdge_;
-}
-
-- (instancetype)initWithLeadingEdge:(BOOL)isLeadingEdge {
-  self = [super initWithFrame:NSZeroRect];
-  if (self != nil) {
-    isLeadingEdge_ = isLeadingEdge;
-  }
-  return self;
-}
-
-- (BOOL)isOpaque {
-  return NO;
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-  (void)dirtyRect;
-  NSColor* solidColor = [NSColor colorWithCalibratedWhite:0.94 alpha:1.0];
-  NSColor* softColor = [NSColor colorWithCalibratedWhite:0.94 alpha:0.32];
-  NSColor* clearColor = [NSColor colorWithCalibratedWhite:0.94 alpha:0.0];
-  NSArray<NSColor*>* colors = isLeadingEdge_
-                                  ? @[ solidColor, softColor, clearColor ]
-                                  : @[ clearColor, softColor, solidColor ];
-  NSGradient* gradient = [[NSGradient alloc] initWithColors:colors];
-  [gradient drawInRect:[self bounds] angle:0.0];
-}
-
-@end
+#include "mac/zoom_toolbar_view.h"
 
 namespace {
 
@@ -79,38 +25,6 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   return NSMakeRect(rect.x, rect.y, rect.width, rect.height);
 }
 
-NSButton* MakeToolbarSymbolButton(NSRect frame,
-                                  NSString* symbolName,
-                                  NSString* fallbackTitle,
-                                  id target,
-                                  SEL action,
-                                  NSString* toolTip) {
-  NSButton* button = [[NSButton alloc] initWithFrame:frame];
-  [button setBezelStyle:NSBezelStyleTexturedRounded];
-  [button setTarget:target];
-  [button setAction:action];
-  [button setToolTip:toolTip];
-
-  NSImage* symbolImage = nil;
-  if ([NSImage respondsToSelector:@selector(imageWithSystemSymbolName:accessibilityDescription:)]) {
-    symbolImage = [NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:toolTip];
-  }
-
-  if (symbolImage != nil) {
-    if ([NSImageSymbolConfiguration class] != Nil) {
-      NSImageSymbolConfiguration* configuration =
-          [NSImageSymbolConfiguration configurationWithPointSize:13.0 weight:NSFontWeightSemibold];
-      symbolImage = [symbolImage imageWithSymbolConfiguration:configuration];
-    }
-    [button setImage:symbolImage];
-    [button setImagePosition:NSImageOnly];
-  } else {
-    [button setTitle:fallbackTitle];
-  }
-
-  return button;
-}
-
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
              std::chrono::steady_clock::now() - start)
@@ -119,26 +33,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
 }  // namespace
 
-@interface AppDelegate () <NSWindowDelegate, NSComboBoxDelegate, NSTextFieldDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation>
+@interface AppDelegate () <NSWindowDelegate, PDFRenderCoordinatorDelegate, NSMenuItemValidation, PDFStartupViewDelegate, PDFTabStripViewDelegate, PDFZoomToolbarViewDelegate>
 - (void)installMainMenu;
 - (void)rebuildOpenRecentMenu;
 - (void)installApplicationIcon;
 - (void)installTabStripInView:(NSView*)contentView;
 - (void)installToolbarStripInView:(NSView*)contentView;
 - (void)layoutChrome;
-- (void)rebuildTabStrip;
-- (void)computeTabStripMetrics:(std::vector<CGFloat>*)tabWidths
-                    totalWidth:(CGFloat*)totalTabWidth
-                    trackWidth:(CGFloat*)trackWidth
-              visibleTrackWidth:(CGFloat*)visibleTrackWidth
-                     maxOffset:(CGFloat*)maxOffset
-            needsScrollButtons:(BOOL*)needsScrollButtons;
-- (CGFloat)tabStripOffsetByStepping:(NSInteger)direction;
-- (IBAction)scrollTabStripLeft:(id)sender;
-- (IBAction)scrollTabStripRight:(id)sender;
 - (void)updateToolbarForActiveTab;
 - (BOOL)applyZoomString:(NSString*)rawValue;
-- (IBAction)zoomComboBoxChanged:(id)sender;
 - (void)presentError:(NSString*)message;
 - (CGFloat)deviceScaleFactor;
 - (void)loadInitialDocuments;
@@ -177,54 +80,31 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (PDFTabContext*)contextForDocumentPath:(const std::string&)path;
 - (void)selectTabContext:(PDFTabContext*)context;
 - (void)closeTabContext:(PDFTabContext*)context;
-- (IBAction)selectTabFromStrip:(id)sender;
-- (IBAction)closeTabFromStrip:(id)sender;
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)openRecentDocument:(id)sender;
-- (IBAction)openStartupRecentDocument:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
 - (void)installStartupViewInHost:(NSView*)hostView;
-- (void)rebuildStartupView;
-- (void)layoutStartupView;
 @end
 
 @implementation AppDelegate {
   NSWindow* window_;
-  NSView* tabBarView_;
-  NSView* tabStripContentView_;
-  NSView* tabStripRightFadeView_;
+  PDFTabStripView* tabBarView_;
   NSView* contentHostView_;
-  NSView* startupView_;
-  NSView* startupOpenPanelView_;
-  NSView* startupRecentListView_;
-  NSButton* startupClearButton_;
-  NSButton* startupSelectFileButton_;
-  NSButton* tabScrollLeftButton_;
-  NSButton* tabScrollRightButton_;
-  NSView* toolbarStrip_;
-  NSView* pageIndicatorView_;
-  PassiveLabel* pageIndicatorLabel_;
-  NSComboBox* zoomComboBox_;
-  NSButton* zoomOutButton_;
-  NSButton* zoomInButton_;
-  NSButton* zoomActualButton_;
-  NSButton* fitWidthButton_;
-  NSButton* fitPageButton_;
+  PDFStartupView* startupView_;
+  PDFZoomToolbarView* toolbarStrip_;
+  PDFPageIndicatorView* pageIndicatorView_;
   NSMenu* openRecentMenu_;
   std::vector<std::string> recentDocumentPaths_;
-  BOOL zoomComboBoxEditing_;
   NSMutableArray* tabContexts_;
   PDFTabContext* selectedTabContext_;
-  CGFloat tabStripScrollOffset_;
   PDFRenderCoordinator* renderCoordinator_;
   NSTimer* interactiveRenderTimer_;
   NSTimer* pageIndicatorTimer_;
   PDFTabContext* interactiveRenderContext_;
   BOOL suppressScrollTracking_;
-  BOOL shouldEnsureSelectedTabVisible_;
   id keyMonitor_;
   int argc_;
   const char** argv_;
@@ -236,17 +116,14 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     argc_ = argc;
     argv_ = argv;
     keyMonitor_ = nil;
-    zoomComboBoxEditing_ = NO;
     openRecentMenu_ = nil;
     selectedTabContext_ = nil;
-    tabStripScrollOffset_ = 0.0f;
     recentDocumentPaths_ = pdfview::core::load_recent_documents();
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     interactiveRenderTimer_ = nil;
     pageIndicatorTimer_ = nil;
     interactiveRenderContext_ = nil;
     suppressScrollTracking_ = NO;
-    shouldEnsureSelectedTabVisible_ = YES;
     tabContexts_ = [[NSMutableArray alloc] init];
   }
   return self;
@@ -438,337 +315,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [openRecentMenu_ addItem:clearItem];
 }
 
-- (void)computeTabStripMetrics:(std::vector<CGFloat>*)tabWidths
-                    totalWidth:(CGFloat*)totalTabWidth
-                    trackWidth:(CGFloat*)trackWidth
-              visibleTrackWidth:(CGFloat*)visibleTrackWidth
-                     maxOffset:(CGFloat*)maxOffset
-            needsScrollButtons:(BOOL*)needsScrollButtons {
-  if (tabWidths != nullptr) {
-    tabWidths->clear();
-    tabWidths->reserve([tabContexts_ count]);
-  }
-  if (totalTabWidth != nullptr) {
-    *totalTabWidth = 0.0f;
-  }
-
-  const CGFloat tabGap = 8.0f;
-  const CGFloat leadingInset = 10.0f;
-  const CGFloat trailingInset = 10.0f;
-  const CGFloat leftPadding = 12.0f;
-  const CGFloat closeButtonSize = 22.0f;
-  const CGFloat closeRightInset = 8.0f;
-  const CGFloat titleToCloseGap = 8.0f;
-  const CGFloat rightReserved = closeButtonSize + closeRightInset + titleToCloseGap;
-  const CGFloat scrollButtonWidth = 22.0f;
-  const CGFloat scrollButtonGap = 6.0f;
-  const CGFloat scrollButtonsLeftGap = 10.0f;
-  const CGFloat fadeWidth = 32.0f;
-
-  CGFloat computedTotalWidth = 0.0f;
-  for (PDFTabContext* context in tabContexts_) {
-    NSString* title = [context tabTitle];
-    NSDictionary* attributes = @{
-      NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
-    };
-    const CGFloat titleWidth = std::ceil([title sizeWithAttributes:attributes].width);
-    const CGFloat tabWidth =
-        std::min(std::max(titleWidth + leftPadding + rightReserved + 4.0, 150.0), 320.0);
-    if (tabWidths != nullptr) {
-      tabWidths->push_back(tabWidth);
-    }
-    computedTotalWidth += tabWidth;
-  }
-
-  if ([tabContexts_ count] > 1) {
-    computedTotalWidth += tabGap * ([tabContexts_ count] - 1);
-  }
-
-  const CGFloat fullTrackWidth =
-      std::max(NSWidth([tabBarView_ bounds]) - leadingInset - trailingInset, 0.0);
-  const BOOL shouldShowScrollButtons = computedTotalWidth > fullTrackWidth;
-  const CGFloat buttonAreaWidth =
-      shouldShowScrollButtons
-          ? (scrollButtonWidth * 2.0f + scrollButtonGap + scrollButtonsLeftGap)
-          : 0.0f;
-  const CGFloat computedTrackWidth = std::max(fullTrackWidth - buttonAreaWidth, 0.0);
-  const CGFloat computedVisibleTrackWidth =
-      std::max(computedTrackWidth - (shouldShowScrollButtons ? fadeWidth : 0.0f), 0.0);
-  const CGFloat computedMaxOffset = std::max(computedTotalWidth - computedTrackWidth, 0.0);
-
-  if (totalTabWidth != nullptr) {
-    *totalTabWidth = computedTotalWidth;
-  }
-  if (trackWidth != nullptr) {
-    *trackWidth = computedTrackWidth;
-  }
-  if (visibleTrackWidth != nullptr) {
-    *visibleTrackWidth = computedVisibleTrackWidth;
-  }
-  if (maxOffset != nullptr) {
-    *maxOffset = computedMaxOffset;
-  }
-  if (needsScrollButtons != nullptr) {
-    *needsScrollButtons = shouldShowScrollButtons;
-  }
-}
-
-- (CGFloat)tabStripOffsetByStepping:(NSInteger)direction {
-  std::vector<CGFloat> tabWidths;
-  CGFloat totalTabWidth = 0.0f;
-  CGFloat trackWidth = 0.0f;
-  CGFloat visibleTrackWidth = 0.0f;
-  CGFloat maxOffset = 0.0f;
-  BOOL needsScrollButtons = NO;
-  [self computeTabStripMetrics:&tabWidths
-                    totalWidth:&totalTabWidth
-                    trackWidth:&trackWidth
-              visibleTrackWidth:&visibleTrackWidth
-                     maxOffset:&maxOffset
-            needsScrollButtons:&needsScrollButtons];
-  (void)totalTabWidth;
-
-  if (!needsScrollButtons || tabWidths.empty()) {
-    return 0.0f;
-  }
-
-  const CGFloat tabGap = 8.0f;
-  const CGFloat currentOffset = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
-  const CGFloat visibleStart = currentOffset;
-  const CGFloat visibleEnd = currentOffset + visibleTrackWidth;
-
-  CGFloat x = 0.0f;
-  if (direction > 0) {
-    for (CGFloat tabWidth : tabWidths) {
-      const CGFloat tabStart = x;
-      const CGFloat tabEnd = x + tabWidth;
-      if (tabEnd > visibleEnd + 0.5f) {
-        return std::min(tabStart, maxOffset);
-      }
-      x = tabEnd + tabGap;
-    }
-    return maxOffset;
-  }
-
-  for (CGFloat tabWidth : tabWidths) {
-    const CGFloat tabStart = x;
-    const CGFloat tabEnd = x + tabWidth;
-    if (tabStart >= visibleStart - 0.5f) {
-      break;
-    }
-    if (tabEnd > visibleStart + 0.5f) {
-      return tabStart;
-    }
-    x = tabEnd + tabGap;
-  }
-
-  CGFloat previousStart = 0.0f;
-  x = 0.0f;
-  for (CGFloat tabWidth : tabWidths) {
-    const CGFloat tabStart = x;
-    const CGFloat tabEnd = x + tabWidth;
-    if (tabEnd >= visibleStart - 0.5f) {
-      return previousStart;
-    }
-    previousStart = tabStart;
-    x = tabEnd + tabGap;
-  }
-
-  return 0.0f;
-}
-
-- (void)rebuildTabStrip {
-  if (tabBarView_ == nil) {
-    return;
-  }
-
-  NSArray<NSView*>* subviews = [[tabBarView_ subviews] copy];
-  for (NSView* subview in subviews) {
-    if ([subview isKindOfClass:[NSBox class]] ||
-        subview == tabStripContentView_ ||
-        subview == tabStripRightFadeView_ ||
-        subview == tabScrollLeftButton_ ||
-        subview == tabScrollRightButton_) {
-      continue;
-    }
-    [subview removeFromSuperview];
-  }
-
-  NSArray<NSView*>* tabSubviews = [[tabStripContentView_ subviews] copy];
-  for (NSView* subview in tabSubviews) {
-    [subview removeFromSuperview];
-  }
-
-  if ([tabContexts_ count] == 0) {
-    tabStripScrollOffset_ = 0.0f;
-    [tabScrollLeftButton_ setHidden:YES];
-    [tabScrollRightButton_ setHidden:YES];
-    [tabStripRightFadeView_ setHidden:YES];
-    return;
-  }
-
-  const CGFloat tabHeight = 26.0f;
-  const CGFloat topInset = 4.0f;
-  const CGFloat tabGap = 8.0f;
-  const CGFloat leadingInset = 10.0f;
-  const CGFloat trailingInset = 10.0f;
-  const CGFloat leftPadding = 12.0f;
-  const CGFloat closeButtonSize = 22.0f;
-  const CGFloat closeRightInset = 8.0f;
-  const CGFloat titleToCloseGap = 8.0f;
-  const CGFloat rightReserved = closeButtonSize + closeRightInset + titleToCloseGap;
-  const CGFloat scrollButtonWidth = 22.0f;
-  const CGFloat scrollButtonGap = 6.0f;
-  const CGFloat scrollButtonsLeftGap = 12.0f;
-  const CGFloat fadeWidth = 32.0f;
-  std::vector<CGFloat> tabWidths;
-  CGFloat totalTabWidth = 0.0f;
-  CGFloat trackWidth = 0.0f;
-  CGFloat visibleTrackWidth = 0.0f;
-  CGFloat maxOffset = 0.0f;
-  BOOL needsScrollButtons = NO;
-  [self computeTabStripMetrics:&tabWidths
-                    totalWidth:&totalTabWidth
-                    trackWidth:&trackWidth
-              visibleTrackWidth:&visibleTrackWidth
-                     maxOffset:&maxOffset
-            needsScrollButtons:&needsScrollButtons];
-  tabStripScrollOffset_ = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
-
-  NSUInteger selectedIndex = NSNotFound;
-  for (NSUInteger index = 0; index < [tabContexts_ count]; ++index) {
-    if ([tabContexts_ objectAtIndex:index] == selectedTabContext_) {
-      selectedIndex = index;
-      break;
-    }
-  }
-
-  if (shouldEnsureSelectedTabVisible_ && selectedIndex != NSNotFound) {
-    CGFloat selectedMinX = 0.0f;
-    for (NSUInteger index = 0; index < selectedIndex; ++index) {
-      selectedMinX += tabWidths[index] + tabGap;
-    }
-    const CGFloat selectedMaxX = selectedMinX + tabWidths[selectedIndex];
-    if (selectedMinX < tabStripScrollOffset_) {
-      tabStripScrollOffset_ = selectedMinX;
-    } else if (selectedMaxX > tabStripScrollOffset_ + visibleTrackWidth) {
-      tabStripScrollOffset_ = selectedMaxX - visibleTrackWidth;
-    }
-    tabStripScrollOffset_ = std::min(std::max(tabStripScrollOffset_, 0.0), maxOffset);
-  }
-  shouldEnsureSelectedTabVisible_ = NO;
-
-  [tabScrollLeftButton_ setHidden:!needsScrollButtons];
-  [tabScrollRightButton_ setHidden:!needsScrollButtons];
-  [tabStripContentView_ setFrame:NSMakeRect(leadingInset,
-                                            0.0f,
-                                            trackWidth,
-                                            NSHeight([tabBarView_ bounds]))];
-  const BOOL hasClippedTabsBehindFade =
-      needsScrollButtons && (tabStripScrollOffset_ < maxOffset - 0.5f);
-  [tabStripRightFadeView_ setFrame:NSMakeRect(leadingInset + trackWidth - fadeWidth,
-                                              1.0f,
-                                              fadeWidth,
-                                              NSHeight([tabBarView_ bounds]) - 1.0f)];
-  [tabStripRightFadeView_ setHidden:!hasClippedTabsBehindFade];
-  if (needsScrollButtons) {
-    const CGFloat buttonY = 6.0f;
-    const CGFloat rightButtonX = NSWidth([tabBarView_ bounds]) - trailingInset - scrollButtonWidth;
-    const CGFloat leftButtonX = rightButtonX - scrollButtonGap - scrollButtonWidth;
-    [tabScrollLeftButton_ setFrame:NSMakeRect(leftButtonX, buttonY, scrollButtonWidth, 22.0f)];
-    [tabScrollRightButton_ setFrame:NSMakeRect(rightButtonX, buttonY, scrollButtonWidth, 22.0f)];
-    [tabScrollLeftButton_ setEnabled:tabStripScrollOffset_ > 0.5f];
-    [tabScrollRightButton_ setEnabled:tabStripScrollOffset_ + visibleTrackWidth < totalTabWidth - 0.5f];
-  }
-
-  CGFloat x = -tabStripScrollOffset_;
-  for (NSUInteger tabIndex = 0; tabIndex < [tabContexts_ count]; ++tabIndex) {
-    PDFTabContext* context = [tabContexts_ objectAtIndex:tabIndex];
-    const BOOL isSelected = context == selectedTabContext_;
-    const CGFloat tabWidth = tabWidths[tabIndex];
-    NSString* title = [context tabTitle];
-
-    if (x + tabWidth < -tabGap) {
-      x += tabWidth + tabGap;
-      continue;
-    }
-    if (x > trackWidth + tabGap) {
-      break;
-    }
-
-    NSView* tabContainer =
-        [[NSView alloc] initWithFrame:NSMakeRect(x, topInset, tabWidth, tabHeight)];
-    [tabContainer setWantsLayer:YES];
-    [[tabContainer layer] setCornerRadius:7.0];
-    [[tabContainer layer] setBorderWidth:isSelected ? 1.0 : 0.0];
-    [[tabContainer layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.78 alpha:1.0] CGColor]];
-    [[tabContainer layer] setBackgroundColor:[(isSelected
-                                               ? [NSColor colorWithCalibratedWhite:1.0 alpha:1.0]
-                                               : [NSColor colorWithCalibratedWhite:0.90 alpha:1.0]) CGColor]];
-    [tabStripContentView_ addSubview:tabContainer];
-
-    const CGFloat labelHeight = 17.0f;
-    const CGFloat labelY = std::floor((tabHeight - labelHeight) * 0.5f) - 1.0f;
-    PassiveTextField* titleLabel =
-        [[PassiveTextField alloc] initWithFrame:NSMakeRect(leftPadding,
-                                                           labelY,
-                                                           tabWidth - leftPadding - rightReserved,
-                                                           labelHeight)];
-    [titleLabel setEditable:NO];
-    [titleLabel setBezeled:NO];
-    [titleLabel setBordered:NO];
-    [titleLabel setDrawsBackground:NO];
-    [titleLabel setSelectable:NO];
-    [titleLabel setStringValue:title];
-    [titleLabel setFont:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]];
-    [titleLabel setTextColor:(isSelected
-                              ? [NSColor colorWithCalibratedWhite:0.12 alpha:1.0]
-                              : [NSColor colorWithCalibratedWhite:0.28 alpha:1.0])];
-    [titleLabel setUsesSingleLineMode:YES];
-    [[titleLabel cell] setLineBreakMode:NSLineBreakByTruncatingTail];
-    [[titleLabel cell] setWraps:NO];
-    [titleLabel setAlignment:NSTextAlignmentLeft];
-    [tabContainer addSubview:titleLabel];
-
-    NSButton* tabButton =
-        [[NSButton alloc] initWithFrame:[tabContainer bounds]];
-    [tabButton setTitle:@""];
-    [tabButton setBezelStyle:NSBezelStyleRegularSquare];
-    [tabButton setButtonType:NSButtonTypeMomentaryPushIn];
-    [tabButton setBordered:NO];
-    [tabButton setTransparent:YES];
-    [tabButton setTarget:self];
-    [tabButton setAction:@selector(selectTabFromStrip:)];
-    [tabButton setTag:[tabContexts_ indexOfObjectIdenticalTo:context]];
-    [tabContainer addSubview:tabButton positioned:NSWindowBelow relativeTo:titleLabel];
-
-    NSButton* closeButton =
-        [[NSButton alloc] initWithFrame:NSMakeRect(tabWidth - closeRightInset - closeButtonSize,
-                                                   2.0f,
-                                                   closeButtonSize,
-                                                   closeButtonSize)];
-    [closeButton setTitle:@"×"];
-    [closeButton setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightSemibold]];
-    [closeButton setBezelStyle:NSBezelStyleRegularSquare];
-    [closeButton setBordered:NO];
-    [closeButton setContentTintColor:(isSelected
-                                      ? [NSColor colorWithCalibratedWhite:0.35 alpha:1.0]
-                                      : [NSColor colorWithCalibratedWhite:0.45 alpha:1.0])];
-    [closeButton setTarget:self];
-    [closeButton setAction:@selector(closeTabFromStrip:)];
-    [closeButton setTag:[tabContexts_ indexOfObjectIdenticalTo:context]];
-    [tabContainer addSubview:closeButton];
-
-    x += tabWidth + tabGap;
-  }
-
-  if (needsScrollButtons) {
-    [tabBarView_ addSubview:tabStripRightFadeView_ positioned:NSWindowAbove relativeTo:nil];
-    [tabBarView_ addSubview:tabScrollLeftButton_ positioned:NSWindowAbove relativeTo:nil];
-    [tabBarView_ addSubview:tabScrollRightButton_ positioned:NSWindowAbove relativeTo:nil];
-  }
-}
-
 - (void)installApplicationIcon {
   NSBundle* bundle = [NSBundle mainBundle];
   NSString* iconPath = [bundle pathForResource:@"pdfview" ofType:@"icns"];
@@ -783,47 +329,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)installTabStripInView:(NSView*)contentView {
-  tabBarView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 34)];
-  [tabBarView_ setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
-  [tabBarView_ setWantsLayer:YES];
-  [[tabBarView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.94 alpha:1.0] CGColor]];
-  [[tabBarView_ layer] setMasksToBounds:YES];
+  tabBarView_ = [[PDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, 100, 34) delegate:self];
   [contentView addSubview:tabBarView_];
-
-  tabStripContentView_ = [[NSView alloc] initWithFrame:[tabBarView_ bounds]];
-  [tabStripContentView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-  [tabStripContentView_ setWantsLayer:YES];
-  [[tabStripContentView_ layer] setMasksToBounds:YES];
-  [tabBarView_ addSubview:tabStripContentView_];
-
-  tabStripRightFadeView_ = [[EdgeFadeView alloc] initWithLeadingEdge:NO];
-  [tabStripRightFadeView_ setFrame:NSMakeRect(0, 0, 32, 34)];
-  [tabStripRightFadeView_ setAutoresizingMask:NSViewMinXMargin | NSViewHeightSizable];
-  [tabStripRightFadeView_ setHidden:YES];
-  [tabBarView_ addSubview:tabStripRightFadeView_ positioned:NSWindowAbove relativeTo:tabStripContentView_];
-
-  NSBox* divider = [[NSBox alloc] initWithFrame:NSMakeRect(0, 0, 100, 1)];
-  [divider setBoxType:NSBoxSeparator];
-  [divider setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
-  [tabBarView_ addSubview:divider positioned:NSWindowAbove relativeTo:tabStripContentView_];
-
-  tabScrollRightButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 22, 22)];
-  [tabScrollRightButton_ setTitle:@"›"];
-  [tabScrollRightButton_ setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightSemibold]];
-  [tabScrollRightButton_ setBezelStyle:NSBezelStyleTexturedRounded];
-  [tabScrollRightButton_ setTarget:self];
-  [tabScrollRightButton_ setAction:@selector(scrollTabStripRight:)];
-  [tabScrollRightButton_ setHidden:YES];
-  [tabBarView_ addSubview:tabScrollRightButton_];
-
-  tabScrollLeftButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 22, 22)];
-  [tabScrollLeftButton_ setTitle:@"‹"];
-  [tabScrollLeftButton_ setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightSemibold]];
-  [tabScrollLeftButton_ setBezelStyle:NSBezelStyleTexturedRounded];
-  [tabScrollLeftButton_ setTarget:self];
-  [tabScrollLeftButton_ setAction:@selector(scrollTabStripLeft:)];
-  [tabScrollLeftButton_ setHidden:YES];
-  [tabBarView_ addSubview:tabScrollLeftButton_];
 
   contentHostView_ = [[NSView alloc] initWithFrame:[contentView bounds]];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -834,308 +341,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)installToolbarStripInView:(NSView*)contentView {
-  toolbarStrip_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)];
-  [toolbarStrip_ setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
-  [toolbarStrip_ setWantsLayer:YES];
-  [[toolbarStrip_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.965 alpha:1.0] CGColor]];
+  toolbarStrip_ = [[PDFZoomToolbarView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)
+                                                   delegate:self];
   [contentView addSubview:toolbarStrip_];
-
-  NSBox* divider = [[NSBox alloc] initWithFrame:NSMakeRect(0, 0, 100, 1)];
-  [divider setBoxType:NSBoxSeparator];
-  [divider setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
-  [toolbarStrip_ addSubview:divider];
-
-  zoomOutButton_ = MakeToolbarSymbolButton(NSMakeRect(12, 4, 26, 22),
-                                           @"minus",
-                                           @"-",
-                                           self,
-                                           @selector(zoomOut),
-                                           @"Zoom Out");
-  [toolbarStrip_ addSubview:zoomOutButton_];
-
-  zoomComboBox_ = [[NSComboBox alloc] initWithFrame:NSMakeRect(44, 3, 92, 24)];
-  [zoomComboBox_ setUsesDataSource:NO];
-  [zoomComboBox_ setCompletes:NO];
-  [zoomComboBox_ setEditable:YES];
-  [zoomComboBox_ setDelegate:self];
-  [[zoomComboBox_ cell] setWraps:NO];
-  [zoomComboBox_ addItemsWithObjectValues:[NSArray arrayWithObjects:@"50%", @"75%", @"100%", @"125%", @"150%", @"200%", @"300%", nil]];
-  [toolbarStrip_ addSubview:zoomComboBox_];
-
-  zoomInButton_ = MakeToolbarSymbolButton(NSMakeRect(142, 4, 26, 22),
-                                          @"plus",
-                                          @"+",
-                                          self,
-                                          @selector(zoomIn),
-                                          @"Zoom In");
-  [toolbarStrip_ addSubview:zoomInButton_];
-
-  zoomActualButton_ = MakeToolbarSymbolButton(NSMakeRect(176, 4, 32, 22),
-                                              @"1.circle",
-                                              @"100",
-                                              self,
-                                              @selector(zoomToActualSize),
-                                              @"Zoom to 100%");
-  [toolbarStrip_ addSubview:zoomActualButton_];
-
-  fitWidthButton_ = MakeToolbarSymbolButton(NSMakeRect(214, 4, 32, 22),
-                                            @"arrow.left.and.right.square",
-                                            @"Width",
-                                            self,
-                                            @selector(resetZoomToFitWidth),
-                                            @"Fit Width");
-  [toolbarStrip_ addSubview:fitWidthButton_];
-
-  fitPageButton_ = MakeToolbarSymbolButton(NSMakeRect(252, 4, 32, 22),
-                                           @"document",
-                                           @"Page",
-                                           self,
-                                           @selector(fitZoomToPage),
-                                           @"Fit Page");
-  [toolbarStrip_ addSubview:fitPageButton_];
 }
 
 - (void)installStartupViewInHost:(NSView*)hostView {
-  startupView_ = [[NSView alloc] initWithFrame:[hostView bounds]];
-  [startupView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-  [startupView_ setWantsLayer:YES];
-  [[startupView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.96 alpha:1.0] CGColor]];
+  startupView_ = [[PDFStartupView alloc] initWithFrame:[hostView bounds] delegate:self];
+  [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
   [hostView addSubview:startupView_];
-
-  NSTextField* titleLabel =
-      [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 28)];
-  [titleLabel setEditable:NO];
-  [titleLabel setBezeled:NO];
-  [titleLabel setBordered:NO];
-  [titleLabel setDrawsBackground:NO];
-  [titleLabel setSelectable:NO];
-  [titleLabel setStringValue:@"Recents"];
-  [titleLabel setFont:[NSFont systemFontOfSize:22.0 weight:NSFontWeightSemibold]];
-  [titleLabel setTextColor:[NSColor colorWithCalibratedWhite:0.16 alpha:1.0]];
-  [titleLabel setTag:1001];
-  [startupView_ addSubview:titleLabel];
-
-  startupClearButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 116, 28)];
-  [startupClearButton_ setTitle:@"Clear Recents"];
-  [startupClearButton_ setBezelStyle:NSBezelStyleRounded];
-  [startupClearButton_ setTarget:self];
-  [startupClearButton_ setAction:@selector(clearRecentDocuments:)];
-  [startupView_ addSubview:startupClearButton_];
-
-  startupOpenPanelView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 132)];
-  [startupOpenPanelView_ setWantsLayer:YES];
-  [[startupOpenPanelView_ layer] setCornerRadius:16.0f];
-  [[startupOpenPanelView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:1.0 alpha:0.9] CGColor]];
-  [[startupOpenPanelView_ layer] setBorderWidth:1.0f];
-  [[startupOpenPanelView_ layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.86 alpha:1.0] CGColor]];
-  [startupView_ addSubview:startupOpenPanelView_];
-
-  NSTextField* openTitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
-  [openTitleLabel setEditable:NO];
-  [openTitleLabel setBezeled:NO];
-  [openTitleLabel setBordered:NO];
-  [openTitleLabel setDrawsBackground:NO];
-  [openTitleLabel setSelectable:NO];
-  [openTitleLabel setStringValue:@"Open new document"];
-  [openTitleLabel setFont:[NSFont systemFontOfSize:20.0 weight:NSFontWeightSemibold]];
-  [openTitleLabel setTextColor:[NSColor colorWithCalibratedWhite:0.16 alpha:1.0]];
-  [openTitleLabel setTag:1002];
-  [startupView_ addSubview:openTitleLabel];
-
-  startupSelectFileButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(24, 48, 108, 30)];
-  [startupSelectFileButton_ setTitle:@"Select File"];
-  [startupSelectFileButton_ setBezelStyle:NSBezelStyleRounded];
-  [startupSelectFileButton_ setTarget:self];
-  [startupSelectFileButton_ setAction:@selector(openDocument:)];
-  [startupOpenPanelView_ addSubview:startupSelectFileButton_];
-
-  NSTextField* openHintLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(24, 84, 220, 16)];
-  [openHintLabel setEditable:NO];
-  [openHintLabel setBezeled:NO];
-  [openHintLabel setBordered:NO];
-  [openHintLabel setDrawsBackground:NO];
-  [openHintLabel setSelectable:NO];
-  [openHintLabel setStringValue:@"Choose a PDF from disk, or drag one here."];
-  [openHintLabel setFont:[NSFont systemFontOfSize:12.0]];
-  [openHintLabel setTextColor:[NSColor colorWithCalibratedWhite:0.46 alpha:1.0]];
-  [openHintLabel setTag:1003];
-  [startupOpenPanelView_ addSubview:openHintLabel];
-
-  NSImageView* openIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(442, 18, 92, 92)];
-  if ([NSImage respondsToSelector:@selector(imageWithSystemSymbolName:accessibilityDescription:)]) {
-    NSImage* icon = [NSImage imageWithSystemSymbolName:@"doc.text.image"
-                               accessibilityDescription:@"Document"];
-    if (icon != nil && [NSImageSymbolConfiguration class] != Nil) {
-      icon = [icon imageWithSymbolConfiguration:
-                  [NSImageSymbolConfiguration configurationWithPointSize:56.0
-                                                                  weight:NSFontWeightLight]];
-    }
-    [openIconView setImage:icon];
-    [openIconView setContentTintColor:[NSColor colorWithCalibratedWhite:0.65 alpha:1.0]];
-  }
-  [openIconView setImageScaling:NSImageScaleProportionallyUpOrDown];
-  [startupOpenPanelView_ addSubview:openIconView];
-
-  startupRecentListView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 300)];
-  [startupRecentListView_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxXMargin |
-                                           NSViewMinYMargin | NSViewMaxYMargin];
-  [startupRecentListView_ setWantsLayer:YES];
-  [[startupRecentListView_ layer] setCornerRadius:14.0f];
-  [[startupRecentListView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:1.0 alpha:0.9] CGColor]];
-  [[startupRecentListView_ layer] setBorderWidth:1.0f];
-  [[startupRecentListView_ layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.86 alpha:1.0] CGColor]];
-  [startupView_ addSubview:startupRecentListView_];
-
-  [self layoutStartupView];
-  [self rebuildStartupView];
-}
-
-- (void)rebuildStartupView {
-  if (startupRecentListView_ == nil) {
-    return;
-  }
-
-  [self layoutStartupView];
-  [startupClearButton_ setEnabled:!recentDocumentPaths_.empty()];
-
-  NSArray<NSView*>* subviews = [[startupRecentListView_ subviews] copy];
-  for (NSView* subview in subviews) {
-    [subview removeFromSuperview];
-  }
-
-  if (recentDocumentPaths_.empty()) {
-    NSTextField* emptyLabel =
-        [[NSTextField alloc] initWithFrame:NSMakeRect(24, 26, 360, 22)];
-    [emptyLabel setEditable:NO];
-    [emptyLabel setBezeled:NO];
-    [emptyLabel setBordered:NO];
-    [emptyLabel setDrawsBackground:NO];
-    [emptyLabel setSelectable:NO];
-    [emptyLabel setStringValue:@"No recent documents yet."];
-    [emptyLabel setFont:[NSFont systemFontOfSize:14.0]];
-    [emptyLabel setTextColor:[NSColor colorWithCalibratedWhite:0.46 alpha:1.0]];
-    [startupRecentListView_ addSubview:emptyLabel];
-    return;
-  }
-
-  const CGFloat rowHeight = 44.0f;
-  const CGFloat rowGap = 10.0f;
-  const CGFloat leftInset = 18.0f;
-  const CGFloat topInset = 18.0f;
-  const CGFloat maxWidth = NSWidth([startupRecentListView_ bounds]) - leftInset * 2.0f;
-
-  for (size_t index = 0; index < recentDocumentPaths_.size(); ++index) {
-    NSString* path = [NSString stringWithUTF8String:recentDocumentPaths_[index].c_str()];
-    if (path == nil || [path length] == 0) {
-      continue;
-    }
-
-    const CGFloat y = NSHeight([startupRecentListView_ bounds]) - topInset - rowHeight - index * (rowHeight + rowGap);
-    if (y < 16.0f) {
-      break;
-    }
-
-    NSButton* rowButton =
-        [[NSButton alloc] initWithFrame:NSMakeRect(leftInset, y, maxWidth, rowHeight)];
-    [rowButton setBezelStyle:NSBezelStyleRegularSquare];
-    [rowButton setBordered:NO];
-    [rowButton setButtonType:NSButtonTypeMomentaryPushIn];
-    [rowButton setTarget:self];
-    [rowButton setAction:@selector(openStartupRecentDocument:)];
-    [rowButton setTag:static_cast<NSInteger>(index)];
-    [rowButton setTitle:@""];
-    [rowButton setToolTip:path];
-    [rowButton setWantsLayer:YES];
-    [[rowButton layer] setCornerRadius:10.0f];
-    [[rowButton layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.97 alpha:1.0] CGColor]];
-    [[rowButton layer] setBorderWidth:1.0f];
-    [[rowButton layer] setBorderColor:[[NSColor colorWithCalibratedWhite:0.90 alpha:1.0] CGColor]];
-    [startupRecentListView_ addSubview:rowButton];
-
-    NSTextField* nameLabel =
-        [[NSTextField alloc] initWithFrame:NSMakeRect(14.0f, 20.0f, maxWidth - 28.0f, 18.0f)];
-    [nameLabel setEditable:NO];
-    [nameLabel setBezeled:NO];
-    [nameLabel setBordered:NO];
-    [nameLabel setDrawsBackground:NO];
-    [nameLabel setSelectable:NO];
-    [nameLabel setStringValue:[path lastPathComponent]];
-    [nameLabel setFont:[NSFont systemFontOfSize:14.0 weight:NSFontWeightMedium]];
-    [nameLabel setTextColor:[NSColor colorWithCalibratedWhite:0.16 alpha:1.0]];
-    [nameLabel setUsesSingleLineMode:YES];
-    [[nameLabel cell] setWraps:NO];
-    [[nameLabel cell] setLineBreakMode:NSLineBreakByTruncatingTail];
-    [rowButton addSubview:nameLabel];
-
-    NSTextField* pathLabel =
-        [[NSTextField alloc] initWithFrame:NSMakeRect(14.0f, 6.0f, maxWidth - 28.0f, 14.0f)];
-    [pathLabel setEditable:NO];
-    [pathLabel setBezeled:NO];
-    [pathLabel setBordered:NO];
-    [pathLabel setDrawsBackground:NO];
-    [pathLabel setSelectable:NO];
-    NSString* directoryPath = [path stringByDeletingLastPathComponent];
-    [pathLabel setStringValue:directoryPath];
-    [pathLabel setFont:[NSFont systemFontOfSize:11.0]];
-    [pathLabel setTextColor:[NSColor colorWithCalibratedWhite:0.47 alpha:1.0]];
-    [pathLabel setUsesSingleLineMode:YES];
-    [[pathLabel cell] setWraps:NO];
-    [[pathLabel cell] setLineBreakMode:NSLineBreakByTruncatingMiddle];
-    [rowButton addSubview:pathLabel];
-  }
-}
-
-- (void)layoutStartupView {
-  if (startupView_ == nil || startupOpenPanelView_ == nil ||
-      startupRecentListView_ == nil || startupClearButton_ == nil) {
-    return;
-  }
-
-  const NSRect bounds = [startupView_ bounds];
-  NSTextField* titleLabel = (NSTextField*)[startupView_ viewWithTag:1001];
-  NSTextField* openTitleLabel = (NSTextField*)[startupView_ viewWithTag:1002];
-  const CGFloat contentWidth = 560.0f;
-  const CGFloat openPanelHeight = 132.0f;
-  const CGFloat openHeaderHeight = 28.0f;
-  const CGFloat rowHeight = 44.0f;
-  const CGFloat rowGap = 10.0f;
-  const CGFloat listTopInset = 18.0f;
-  const CGFloat listBottomInset = 18.0f;
-  const size_t visibleRowCount = std::min<size_t>(recentDocumentPaths_.empty() ? 1 : recentDocumentPaths_.size(), 5);
-  const CGFloat listHeight =
-      recentDocumentPaths_.empty()
-          ? 76.0f
-          : listTopInset + listBottomInset +
-                visibleRowCount * rowHeight +
-                std::max<CGFloat>(0.0f, static_cast<CGFloat>(visibleRowCount - 1)) * rowGap;
-  const CGFloat headerHeight = 32.0f;
-  const CGFloat openHeaderSpacing = 8.0f;
-  const CGFloat sectionSpacing = 26.0f;
-  const CGFloat headerSpacing = 8.0f;
-  const CGFloat totalHeight =
-      openHeaderHeight + openHeaderSpacing + openPanelHeight +
-      sectionSpacing + headerHeight + headerSpacing + listHeight;
-  const CGFloat originX = std::floor((NSWidth(bounds) - contentWidth) * 0.5f);
-  const CGFloat originY = std::floor((NSHeight(bounds) - totalHeight) * 0.5f);
-
-  [openTitleLabel setFrame:NSMakeRect(originX,
-                                      originY + listHeight + headerHeight + headerSpacing +
-                                          sectionSpacing + openPanelHeight + openHeaderSpacing + 2.0f,
-                                      260.0f,
-                                      24.0f)];
-  [startupOpenPanelView_ setFrame:NSMakeRect(originX,
-                                             originY + listHeight + headerHeight + headerSpacing + sectionSpacing,
-                                             contentWidth,
-                                             openPanelHeight)];
-  [titleLabel setFrame:NSMakeRect(originX,
-                                  originY + listHeight + headerSpacing + 2.0f,
-                                  200.0f,
-                                  28.0f)];
-  [startupClearButton_ setFrame:NSMakeRect(originX + contentWidth - 116.0f,
-                                           originY + listHeight + headerSpacing,
-                                           116.0f,
-                                           28.0f)];
-  [startupRecentListView_ setFrame:NSMakeRect(originX, originY, contentWidth, listHeight)];
 }
 
 - (void)layoutChrome {
@@ -1148,20 +362,28 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   const CGFloat tabBarHeight = [tabContexts_ count] > 0 ? 34.0f : 0.0f;
   const CGFloat toolbarHeight = 32.0f;
   PDFTabContext* context = [self activeTabContext];
+  NSMutableArray<NSString*>* tabTitles = [[NSMutableArray alloc] initWithCapacity:[tabContexts_ count]];
+  NSInteger selectedIndex = NSNotFound;
+  for (NSUInteger index = 0; index < [tabContexts_ count]; ++index) {
+    PDFTabContext* tabContext = [tabContexts_ objectAtIndex:index];
+    [tabTitles addObject:[tabContext tabTitle]];
+    if (tabContext == selectedTabContext_) {
+      selectedIndex = static_cast<NSInteger>(index);
+    }
+  }
   [tabBarView_ setHidden:[tabContexts_ count] == 0];
   [tabBarView_ setFrame:NSMakeRect(0,
                                    contentBounds.size.height - tabBarHeight,
                                    contentBounds.size.width,
                                    tabBarHeight)];
-  [self rebuildTabStrip];
+  [tabBarView_ setTabTitles:tabTitles selectedIndex:selectedIndex];
 
   if (context == nil) {
     [toolbarStrip_ setHidden:YES];
     [contentHostView_ setFrame:NSMakeRect(0, 0, contentBounds.size.width, contentBounds.size.height)];
     [startupView_ setHidden:NO];
     [startupView_ setFrame:[contentHostView_ bounds]];
-    [self layoutStartupView];
-    [self rebuildStartupView];
+    [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
     return;
   }
 
@@ -1188,41 +410,29 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 }
 
 - (void)updateToolbarForActiveTab {
-  if (zoomComboBox_ == nil) {
+  if (toolbarStrip_ == nil) {
     return;
   }
 
   PDFTabContext* context = [self activeTabContext];
   if (context == nil) {
-    [zoomComboBox_ setStringValue:@""];
-    [zoomComboBox_ setEnabled:NO];
-    return;
-  }
-
-  if (zoomComboBoxEditing_) {
+    [toolbarStrip_ showEmptyState];
     return;
   }
 
   const float currentScale = [self currentScaleForContext:context];
-  [zoomComboBox_ setEnabled:YES];
-  [zoomOutButton_ setEnabled:currentScale > kMinimumManualScale + 0.001f];
-  [zoomInButton_ setEnabled:currentScale < kMaximumManualScale - 0.001f];
-  [zoomActualButton_ setEnabled:std::abs(currentScale - 1.0f) > 0.001f];
-  [fitWidthButton_ setEnabled:YES];
-  [fitPageButton_ setEnabled:YES];
-  [fitWidthButton_ setState:context->viewModel_.view_state().scale_mode == pdfview::core::ScaleMode::FitWidth
-                                ? NSControlStateValueOn
-                                : NSControlStateValueOff];
-  [fitPageButton_ setState:context->viewModel_.view_state().scale_mode == pdfview::core::ScaleMode::FitPage
-                               ? NSControlStateValueOn
-                               : NSControlStateValueOff];
-  [zoomComboBox_ setStringValue:[NSString stringWithFormat:@"%.0f%%",
-                                                           currentScale * 100.0f]];
+  [toolbarStrip_ updateWithCurrentScale:currentScale
+                           minimumScale:kMinimumManualScale
+                           maximumScale:kMaximumManualScale
+                         fitWidthActive:context->viewModel_.view_state().scale_mode ==
+                                        pdfview::core::ScaleMode::FitWidth
+                          fitPageActive:context->viewModel_.view_state().scale_mode ==
+                                         pdfview::core::ScaleMode::FitPage];
 }
 
 - (BOOL)applyZoomString:(NSString*)rawValue {
   PDFTabContext* context = [self activeTabContext];
-  if (context == nil || zoomComboBox_ == nil) {
+  if (context == nil || toolbarStrip_ == nil) {
     return NO;
   }
 
@@ -1241,65 +451,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self renderTabContext:context];
   [self updateToolbarForActiveTab];
   return YES;
-}
-
-- (IBAction)zoomComboBoxChanged:(id)sender {
-  (void)sender;
-}
-
-- (void)comboBoxSelectionDidChange:(NSNotification*)notification {
-  if ([notification object] != zoomComboBox_) {
-    return;
-  }
-
-  zoomComboBoxEditing_ = NO;
-  const NSInteger selectedIndex = [zoomComboBox_ indexOfSelectedItem];
-  if (selectedIndex >= 0) {
-    id value = [zoomComboBox_ objectValueOfSelectedItem];
-    if ([value isKindOfClass:[NSString class]]) {
-      [self applyZoomString:(NSString*)value];
-      return;
-    }
-  }
-  [self updateToolbarForActiveTab];
-}
-
-- (void)controlTextDidBeginEditing:(NSNotification*)notification {
-  if ([notification object] == zoomComboBox_) {
-    zoomComboBoxEditing_ = YES;
-  }
-}
-
-- (void)controlTextDidEndEditing:(NSNotification*)notification {
-  if ([notification object] == zoomComboBox_) {
-    zoomComboBoxEditing_ = NO;
-    [self updateToolbarForActiveTab];
-  }
-}
-
-- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)commandSelector {
-  (void)textView;
-  if (control != zoomComboBox_) {
-    return NO;
-  }
-
-  if (commandSelector == @selector(insertNewline:)) {
-    zoomComboBoxEditing_ = NO;
-    const BOOL applied = [self applyZoomString:[zoomComboBox_ stringValue]];
-    if (applied) {
-      [[window_ firstResponder] resignFirstResponder];
-    }
-    return YES;
-  }
-
-  if (commandSelector == @selector(cancelOperation:)) {
-    zoomComboBoxEditing_ = NO;
-    [self updateToolbarForActiveTab];
-    [[window_ firstResponder] resignFirstResponder];
-    return YES;
-  }
-
-  return NO;
 }
 
 - (void)presentError:(NSString*)message {
@@ -1336,7 +487,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   recentDocumentPaths_ = pdfview::core::note_recent_document(recentDocumentPaths_, path);
   pdfview::core::save_recent_documents(recentDocumentPaths_);
   [self rebuildOpenRecentMenu];
-  [self rebuildStartupView];
+  [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(tabClipViewDidScroll:)
                                                name:NSViewBoundsDidChangeNotification
@@ -1373,19 +524,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 }
 
-- (IBAction)openStartupRecentDocument:(id)sender {
-  if (![sender isKindOfClass:[NSButton class]]) {
-    return;
-  }
-
-  const NSInteger index = [(NSButton*)sender tag];
-  if (index < 0 || index >= static_cast<NSInteger>(recentDocumentPaths_.size())) {
-    return;
-  }
-
-  [self openDocumentAtPath:recentDocumentPaths_[index] makeActive:YES];
-}
-
 - (IBAction)openRecentDocument:(id)sender {
   if (![sender isKindOfClass:[NSMenuItem class]]) {
     return;
@@ -1399,12 +537,69 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self openDocumentAtPath:[path UTF8String] makeActive:YES];
 }
 
+- (void)startupViewDidRequestOpenDocument {
+  [self openDocument:nil];
+}
+
+- (void)startupViewDidRequestOpenRecentDocumentAtIndex:(NSInteger)index {
+  if (index < 0 || index >= static_cast<NSInteger>(recentDocumentPaths_.size())) {
+    return;
+  }
+
+  [self openDocumentAtPath:recentDocumentPaths_[index] makeActive:YES];
+}
+
+- (void)startupViewDidRequestClearRecents {
+  [self clearRecentDocuments:nil];
+}
+
+- (void)tabStripViewDidSelectTabAtIndex:(NSInteger)index {
+  if (index < 0 || index >= [tabContexts_ count]) {
+    return;
+  }
+
+  [self cancelInteractiveRendering];
+  [self selectTabContext:[tabContexts_ objectAtIndex:index]];
+}
+
+- (void)tabStripViewDidCloseTabAtIndex:(NSInteger)index {
+  if (index < 0 || index >= [tabContexts_ count]) {
+    return;
+  }
+
+  [self closeTabContext:[tabContexts_ objectAtIndex:index]];
+}
+
+- (void)zoomToolbarViewDidRequestZoomOut {
+  [self zoomOut];
+}
+
+- (void)zoomToolbarViewDidRequestZoomIn {
+  [self zoomIn];
+}
+
+- (void)zoomToolbarViewDidRequestZoomActual {
+  [self zoomToActualSize];
+}
+
+- (void)zoomToolbarViewDidRequestFitWidth {
+  [self resetZoomToFitWidth];
+}
+
+- (void)zoomToolbarViewDidRequestFitPage {
+  [self fitZoomToPage];
+}
+
+- (void)zoomToolbarViewDidSubmitZoomString:(NSString*)zoomString {
+  [self applyZoomString:zoomString];
+}
+
 - (IBAction)clearRecentDocuments:(id)sender {
   (void)sender;
   recentDocumentPaths_.clear();
   pdfview::core::save_recent_documents(recentDocumentPaths_);
   [self rebuildOpenRecentMenu];
-  [self rebuildStartupView];
+  [startupView_ setRecentDocumentPaths:recentDocumentPaths_];
 }
 
 - (IBAction)closeCurrentTab:(id)sender {
@@ -1438,7 +633,6 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)selectTabContext:(PDFTabContext*)context {
   if (context == nil) {
     selectedTabContext_ = nil;
-    shouldEnsureSelectedTabVisible_ = YES;
     [self hidePageIndicator:nil];
     [window_ setTitle:@"PDFView"];
     [self layoutChrome];
@@ -1447,7 +641,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   selectedTabContext_ = context;
-  shouldEnsureSelectedTabVisible_ = YES;
+  [tabBarView_ ensureSelectedTabVisibleOnNextLayout];
   [self hidePageIndicator:nil];
   for (PDFTabContext* tabContext in tabContexts_) {
     [tabContext->containerView_ setHidden:tabContext != selectedTabContext_];
@@ -1487,50 +681,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  shouldEnsureSelectedTabVisible_ = YES;
+  [tabBarView_ ensureSelectedTabVisibleOnNextLayout];
   [self layoutChrome];
   [self updateToolbarForActiveTab];
-}
-
-- (IBAction)selectTabFromStrip:(id)sender {
-  if (![sender isKindOfClass:[NSButton class]]) {
-    return;
-  }
-
-  const NSInteger index = [(NSButton*)sender tag];
-  if (index < 0 || index >= [tabContexts_ count]) {
-    return;
-  }
-
-  [self cancelInteractiveRendering];
-  [self selectTabContext:[tabContexts_ objectAtIndex:index]];
-}
-
-- (IBAction)closeTabFromStrip:(id)sender {
-  if (![sender isKindOfClass:[NSButton class]]) {
-    return;
-  }
-
-  const NSInteger index = [(NSButton*)sender tag];
-  if (index < 0 || index >= [tabContexts_ count]) {
-    return;
-  }
-
-  [self closeTabContext:[tabContexts_ objectAtIndex:index]];
-}
-
-- (IBAction)scrollTabStripLeft:(id)sender {
-  (void)sender;
-  tabStripScrollOffset_ = [self tabStripOffsetByStepping:-1];
-  shouldEnsureSelectedTabVisible_ = NO;
-  [self rebuildTabStrip];
-}
-
-- (IBAction)scrollTabStripRight:(id)sender {
-  (void)sender;
-  tabStripScrollOffset_ = [self tabStripOffsetByStepping:1];
-  shouldEnsureSelectedTabVisible_ = NO;
-  [self rebuildTabStrip];
 }
 
 - (PDFTabContext*)contextForClipView:(NSClipView*)clipView {
@@ -1848,13 +1001,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   NSClipView* clipView = [context->scrollView_ contentView];
   const NSRect visibleBounds = [clipView bounds];
-  const CGFloat viewportHeight = NSHeight(visibleBounds);
-  const CGFloat pageStep = std::max(static_cast<CGFloat>(80.0), viewportHeight * 0.9f);
-  const CGFloat maxOriginY = std::max(static_cast<CGFloat>(0.0),
-                                      NSHeight([context->documentView_ frame]) - viewportHeight);
-  const CGFloat targetOriginY =
-      std::min(std::max(visibleBounds.origin.y + deltaY * pageStep, static_cast<CGFloat>(0.0)),
-               maxOriginY);
+  const CGFloat targetOriginY = context->viewModel_.scroll_y_after_viewport_step(deltaY);
   if (std::abs(targetOriginY - visibleBounds.origin.y) < 0.5f) {
     return;
   }
@@ -1904,26 +1051,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   }
 
   if (pageIndicatorView_ == nil) {
-    pageIndicatorView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 72, 30)];
-    [pageIndicatorView_ setWantsLayer:YES];
-    [[pageIndicatorView_ layer] setCornerRadius:8.0f];
-    [[pageIndicatorView_ layer] setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.10 alpha:0.78] CGColor]];
-    [pageIndicatorView_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
-    [pageIndicatorView_ setHidden:YES];
-
-    pageIndicatorLabel_ = [[PassiveLabel alloc] initWithFrame:NSMakeRect(12, 6, 48, 18)];
-    [pageIndicatorLabel_ setEditable:NO];
-    [pageIndicatorLabel_ setBezeled:NO];
-    [pageIndicatorLabel_ setBordered:NO];
-    [pageIndicatorLabel_ setDrawsBackground:NO];
-    [pageIndicatorLabel_ setSelectable:NO];
-    [pageIndicatorLabel_ setAlignment:NSTextAlignmentCenter];
-    [pageIndicatorLabel_ setFont:[NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold]];
-    [pageIndicatorLabel_ setTextColor:[NSColor colorWithCalibratedWhite:1.0 alpha:0.96]];
-    [pageIndicatorLabel_ setUsesSingleLineMode:YES];
-    [[pageIndicatorLabel_ cell] setWraps:NO];
-    [[pageIndicatorLabel_ cell] setLineBreakMode:NSLineBreakByClipping];
-    [pageIndicatorView_ addSubview:pageIndicatorLabel_];
+    pageIndicatorView_ = [[PDFPageIndicatorView alloc] initWithFrame:NSMakeRect(0, 0, 88, 30)];
   }
 
   if ([pageIndicatorView_ superview] != context->containerView_) {
@@ -1939,29 +1067,11 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   [self ensurePageIndicatorAttachedToContext:context];
 
-  const int currentPage = std::max(0, context->viewModel_.view_state().current_page);
-  const int totalPages = context->viewModel_.page_count();
-  NSString* text = [NSString stringWithFormat:@"%d / %d", currentPage + 1, totalPages];
-  [pageIndicatorLabel_ setStringValue:text];
-
-  NSDictionary* attributes = @{
-    NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold]
-  };
-  const CGFloat textWidth = std::ceil([text sizeWithAttributes:attributes].width);
-  const CGFloat indicatorWidth = std::max(static_cast<CGFloat>(88.0), textWidth + 24.0f);
-  const CGFloat indicatorHeight = 30.0f;
-  const CGFloat rightMargin = 30.0f;
-  const BOOL hasHorizontalScroller = [context->scrollView_ hasHorizontalScroller];
-  const CGFloat bottomMargin = hasHorizontalScroller ? 24.0f : 16.0f;
-  const NSRect containerBounds = [context->containerView_ bounds];
-  [pageIndicatorView_ setFrame:NSMakeRect(containerBounds.size.width - indicatorWidth - rightMargin,
-                                          bottomMargin,
-                                          indicatorWidth,
-                                          indicatorHeight)];
-  [pageIndicatorLabel_ setFrame:NSMakeRect(12.0f,
-                                           6.0f,
-                                           indicatorWidth - 24.0f,
-                                           18.0f)];
+  NSString* text =
+      [NSString stringWithUTF8String:context->viewModel_.page_indicator_text().c_str()];
+  [pageIndicatorView_ updateWithText:text
+                      containerBounds:[context->containerView_ bounds]
+                 hasHorizontalScroller:[context->scrollView_ hasHorizontalScroller]];
   [pageIndicatorView_ setHidden:NO];
 
   if (pageIndicatorTimer_ != nil) {
@@ -2002,16 +1112,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)installKeyMonitor {
   keyMonitor_ = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                       handler:^NSEvent*(NSEvent* event) {
-    if (zoomComboBoxEditing_) {
+    if ([toolbarStrip_ isEditingZoomField]) {
       return event;
     }
 
     id firstResponder = [window_ firstResponder];
-    if ([firstResponder isKindOfClass:[NSTextView class]]) {
-      NSTextView* textView = (NSTextView*)firstResponder;
-      if ([textView delegate] == (id)zoomComboBox_) {
-        return event;
-      }
+    if ([toolbarStrip_ ownsFirstResponder:firstResponder]) {
+      return event;
     }
 
     PDFTabContext* context = [self activeTabContext];
