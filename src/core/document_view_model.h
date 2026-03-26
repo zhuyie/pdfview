@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "core/document.h"
@@ -49,7 +50,9 @@ class DocumentViewModel {
   PageCachePlan page_cache_plan(float preload_margin_y) const;
   PageRenderPlan page_render_plan() const;
   void update_current_page_from_scroll();
+  float scroll_y_after_viewport_step(float delta) const;
   float scroll_y_for_current_page() const;
+  std::string page_indicator_text() const;
   ViewRect current_page_rect() const;
 
  private:

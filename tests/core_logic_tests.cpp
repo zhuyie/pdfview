@@ -334,6 +334,42 @@ bool TestDocumentViewModelScrollYForCurrentPage() {
                 "scroll target for the current page should align to the page top and clamp to the document");
 }
 
+bool TestDocumentViewModelViewportStepScroll() {
+  std::vector<pdfview::core::PageSize> page_sizes(2);
+  for (int index = 0; index < 2; ++index) {
+    page_sizes[index].width = 400.0f;
+    page_sizes[index].height = 800.0f;
+  }
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.set_viewport_size(500.0f, 300.0f);
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::Manual;
+  view_model.mutable_view_state()->zoom = 1.0f;
+  view_model.relayout();
+  view_model.set_scroll_origin(0.0f, 100.0f);
+
+  return Expect(NearlyEqual(view_model.scroll_y_after_viewport_step(1.0f), 370.0f),
+                "viewport step should scroll by ninety percent of the viewport height") &&
+         Expect(NearlyEqual(view_model.scroll_y_after_viewport_step(-1.0f), 0.0f),
+                "viewport step should clamp at the document start");
+}
+
+bool TestDocumentViewModelPageIndicatorText() {
+  std::vector<pdfview::core::PageSize> page_sizes(12);
+  for (int index = 0; index < 12; ++index) {
+    page_sizes[index].width = 400.0f;
+    page_sizes[index].height = 400.0f;
+  }
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.mutable_view_state()->current_page = 4;
+
+  return Expect(view_model.page_indicator_text() == "5 / 12",
+                "page indicator text should format the current page and total pages");
+}
+
 bool TestFitPageScale() {
   std::vector<pdfview::core::PageSize> page_sizes(2);
   page_sizes[0].width = 400.0f;
@@ -484,6 +520,12 @@ int main() {
     return 1;
   }
   if (!TestDocumentViewModelScrollYForCurrentPage()) {
+    return 1;
+  }
+  if (!TestDocumentViewModelViewportStepScroll()) {
+    return 1;
+  }
+  if (!TestDocumentViewModelPageIndicatorText()) {
     return 1;
   }
   if (!TestPageCachePlanKeepsNeighborPages()) {

@@ -1,6 +1,7 @@
 #include "core/document_view_model.h"
 
 #include <algorithm>
+#include <string>
 
 namespace pdfview {
 namespace core {
@@ -137,6 +138,12 @@ void DocumentViewModel::update_current_page_from_scroll() {
       layout_result_.page_frames, view_state_.scroll_y, viewport_height_);
 }
 
+float DocumentViewModel::scroll_y_after_viewport_step(float delta) const {
+  const float page_step = std::max(80.0f, viewport_height_ * 0.9f);
+  const float max_scroll_y = std::max(layout_result_.document_height - viewport_height_, 0.0f);
+  return std::min(std::max(view_state_.scroll_y + delta * page_step, 0.0f), max_scroll_y);
+}
+
 float DocumentViewModel::scroll_y_for_current_page() const {
   const ViewRect rect = current_page_rect();
   if (rect.height <= 0.0f) {
@@ -145,6 +152,15 @@ float DocumentViewModel::scroll_y_for_current_page() const {
 
   const float max_scroll_y = std::max(layout_result_.document_height - viewport_height_, 0.0f);
   return std::min(std::max(rect.y, 0.0f), max_scroll_y);
+}
+
+std::string DocumentViewModel::page_indicator_text() const {
+  if (page_count() <= 0) {
+    return std::string();
+  }
+
+  const int current_page = std::max(0, std::min(view_state_.current_page, page_count() - 1));
+  return std::to_string(current_page + 1) + " / " + std::to_string(page_count());
 }
 
 ViewRect DocumentViewModel::current_page_rect() const {
