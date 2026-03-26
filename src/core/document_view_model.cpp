@@ -35,6 +35,7 @@ float DocumentViewModel::fit_width_scale() const {
   return compute_fit_scale(page_sizes_,
                            viewport_width_,
                            metrics.fit_width_horizontal_padding,
+                           metrics.minimum_fit_dimension,
                            metrics.minimum_fit_scale);
 }
 
@@ -57,6 +58,7 @@ float DocumentViewModel::fit_page_scale() const {
   const float fit_width = compute_fit_scale(std::vector<PageSize>(1, page_size),
                                             viewport_width_,
                                             metrics.fit_width_horizontal_padding,
+                                            metrics.minimum_fit_dimension,
                                             metrics.minimum_fit_scale);
   const float target_height =
       std::max(viewport_height_ - metrics.fit_page_vertical_padding,
@@ -87,8 +89,10 @@ bool DocumentViewModel::should_reduce_interactive_scale(float device_scale) cons
     return false;
   }
 
+  const ViewerBehaviorMetrics& behavior = default_viewer_behavior_metrics();
   const ViewRect rect = visible_rect();
-  const PageCachePlan cache_plan = page_cache_plan(rect.height * 0.5f);
+  const PageCachePlan cache_plan =
+      page_cache_plan(rect.height * behavior.preload_margin_viewport_ratio);
   if (cache_plan.preload_range.empty()) {
     return false;
   }
@@ -110,7 +114,8 @@ bool DocumentViewModel::should_reduce_interactive_scale(float device_scale) cons
     max_page_pixels = std::max(max_page_pixels, page_pixels);
   }
 
-  return max_page_pixels >= 2500000.0 || total_visible_pixels >= 5000000.0;
+  return max_page_pixels >= behavior.interactive_scale_max_page_pixels ||
+         total_visible_pixels >= behavior.interactive_scale_total_visible_pixels;
 }
 
 void DocumentViewModel::relayout() {
@@ -168,9 +173,10 @@ PageCachePlan DocumentViewModel::page_cache_plan(float preload_margin_y) const {
 }
 
 PageRenderPlan DocumentViewModel::page_render_plan() const {
+  const ViewerBehaviorMetrics& behavior = default_viewer_behavior_metrics();
   const ViewRect rect = visible_rect();
   const PageCachePlan cache_plan =
-      page_cache_plan(rect.height * 0.5f);
+      page_cache_plan(rect.height * behavior.preload_margin_viewport_ratio);
   return plan_page_rendering(cache_plan.preload_range,
                              cache_plan.keep_range,
                              page_cache_states_,
@@ -190,7 +196,9 @@ void DocumentViewModel::update_current_page_from_scroll() {
 }
 
 float DocumentViewModel::scroll_y_after_viewport_step(float delta) const {
-  const float page_step = std::max(80.0f, viewport_height_ * 0.9f);
+  const ViewerBehaviorMetrics& behavior = default_viewer_behavior_metrics();
+  const float page_step =
+      std::max(behavior.viewport_step_min, viewport_height_ * behavior.viewport_step_ratio);
   const float max_scroll_y = std::max(layout_result_.document_height - viewport_height_, 0.0f);
   return std::min(std::max(view_state_.scroll_y + delta * page_step, 0.0f), max_scroll_y);
 }

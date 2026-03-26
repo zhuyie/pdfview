@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/viewer_layout.h"
+
 namespace pdfview {
 namespace core {
 
@@ -69,6 +71,7 @@ PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& pag
 float compute_fit_scale(const std::vector<PageSize>& page_sizes,
                         float viewport_width,
                         float horizontal_padding,
+                        float minimum_dimension,
                         float min_scale) {
   float max_page_width = 0.0f;
   for (size_t index = 0; index < page_sizes.size(); ++index) {
@@ -79,7 +82,7 @@ float compute_fit_scale(const std::vector<PageSize>& page_sizes,
     return 1.0f;
   }
 
-  const float target_width = std::max(viewport_width - horizontal_padding, 120.0f);
+  const float target_width = std::max(viewport_width - horizontal_padding, minimum_dimension);
   return std::max(target_width / max_page_width, min_scale);
 }
 
@@ -128,10 +131,11 @@ PageCachePlan compute_page_cache_plan(const std::vector<ViewRect>& page_frames,
   plan.preload_rect = expand_rect(visible_rect, 0.0f, preload_margin_y);
   plan.visible_range = find_intersecting_pages(page_frames, visible_rect);
   plan.preload_range = find_intersecting_pages(page_frames, plan.preload_rect);
+  const ViewerBehaviorMetrics& behavior = default_viewer_behavior_metrics();
   plan.keep_range = ExpandPageRange(plan.preload_range,
                                     static_cast<int>(page_frames.size()),
-                                    1,
-                                    1);
+                                    behavior.keep_extra_pages_before,
+                                    behavior.keep_extra_pages_after);
   return plan;
 }
 

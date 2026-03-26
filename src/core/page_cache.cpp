@@ -3,12 +3,12 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/viewer_layout.h"
+
 namespace pdfview {
 namespace core {
 
 namespace {
-
-const float kMaxCoveringScaleRatio = 1.5f;
 
 bool EqualPageIndexRange(const PageIndexRange& lhs, const PageIndexRange& rhs) {
   return lhs.start == rhs.start && lhs.end == rhs.end;
@@ -33,8 +33,10 @@ void invalidate_page_cache(std::vector<PageCacheSlotState>* states) {
 }
 
 bool cache_covers_render_scale(const PageCacheSlotState& state, float target_render_scale) {
-  return state.render_scale + 0.001f >= target_render_scale &&
-         state.render_scale <= target_render_scale * kMaxCoveringScaleRatio + 0.001f;
+  const ViewerBehaviorMetrics& behavior = default_viewer_behavior_metrics();
+  return state.render_scale + behavior.float_epsilon >= target_render_scale &&
+         state.render_scale <=
+             target_render_scale * behavior.cache_covering_scale_ratio + behavior.float_epsilon;
 }
 
 bool should_submit_page_render(const PageCacheSlotState& state,

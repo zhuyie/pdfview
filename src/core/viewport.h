@@ -57,6 +57,7 @@ PageLayoutResult compute_continuous_page_layout(const std::vector<PageSize>& pag
 float compute_fit_scale(const std::vector<PageSize>& page_sizes,
                         float viewport_width,
                         float horizontal_padding,
+                        float minimum_dimension,
                         float min_scale);
 
 ViewRect expand_rect(const ViewRect& rect, float expand_x, float expand_y);

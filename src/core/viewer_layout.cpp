@@ -8,5 +8,10 @@ const ViewerLayoutMetrics& default_viewer_layout_metrics() {
   return metrics;
 }
 
+const ViewerBehaviorMetrics& default_viewer_behavior_metrics() {
+  static const ViewerBehaviorMetrics metrics;
+  return metrics;
+}
+
 }  // namespace core
 }  // namespace pdfview

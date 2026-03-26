@@ -57,6 +57,7 @@ bool TestComputeFitScale() {
   const float scale = pdfview::core::compute_fit_scale(page_sizes,
                                                        800.0f,
                                                        metrics.fit_width_horizontal_padding,
+                                                       metrics.minimum_fit_dimension,
                                                        metrics.minimum_fit_scale);
   return Expect(NearlyEqual(scale, (800.0f - metrics.fit_width_horizontal_padding) / 600.0f),
                 "compute_fit_scale returned an unexpected value");
@@ -463,6 +464,30 @@ bool TestFitPageScale() {
                 "current scale should use fit page mode");
 }
 
+bool TestViewerBehaviorMetricsDefaults() {
+  const pdfview::core::ViewerBehaviorMetrics& behavior =
+      pdfview::core::default_viewer_behavior_metrics();
+
+  return Expect(NearlyEqual(behavior.preload_margin_viewport_ratio, 0.5f),
+                "preload margin ratio should match the shared viewer behavior metrics") &&
+         Expect(behavior.keep_extra_pages_before == 1,
+                "keep range should retain one page before the preload range by default") &&
+         Expect(behavior.keep_extra_pages_after == 1,
+                "keep range should retain one page after the preload range by default") &&
+         Expect(NearlyEqual(behavior.viewport_step_min, 80.0f),
+                "viewport step minimum should match the shared viewer behavior metrics") &&
+         Expect(NearlyEqual(behavior.viewport_step_ratio, 0.9f),
+                "viewport step ratio should match the shared viewer behavior metrics") &&
+         Expect(NearlyEqual(behavior.interactive_scale_max_page_pixels, 2500000.0f),
+                "interactive page pixel threshold should match the shared viewer behavior metrics") &&
+         Expect(NearlyEqual(behavior.interactive_scale_total_visible_pixels, 5000000.0f),
+                "interactive total pixel threshold should match the shared viewer behavior metrics") &&
+         Expect(NearlyEqual(behavior.cache_covering_scale_ratio, 1.5f),
+                "covering scale ratio should match the shared viewer behavior metrics") &&
+         Expect(NearlyEqual(behavior.float_epsilon, 0.001f),
+                "float epsilon should match the shared viewer behavior metrics");
+}
+
 bool TestPageCachePlanKeepsNeighborPages() {
   std::vector<pdfview::core::ViewRect> page_frames(5);
   for (int index = 0; index < 5; ++index) {
@@ -612,6 +637,9 @@ int main() {
     return 1;
   }
   if (!TestFitPageScale()) {
+    return 1;
+  }
+  if (!TestViewerBehaviorMetricsDefaults()) {
     return 1;
   }
   if (!TestViewportTopPageSelection()) {
