@@ -9,6 +9,10 @@
 - (BOOL)documentInteractionControllerIsContextActive:(PDFTabContext*)context;
 - (void)documentInteractionControllerUpdateVisiblePagesForContext:(PDFTabContext*)context;
 - (void)documentInteractionControllerUpdateCurrentPageFromScrollForContext:(PDFTabContext*)context;
+- (BOOL)documentInteractionControllerPerformSelectionAutoScrollForContext:(PDFTabContext*)context
+                                                                   deltaY:(CGFloat)deltaY;
+- (void)documentInteractionControllerUpdateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
+                                                                   context:(PDFTabContext*)context;
 
 @end
 
@@ -23,5 +27,8 @@
 - (void)hidePageIndicator;
 - (void)handleClipViewDidScrollForContext:(PDFTabContext*)context
                     suppressScrollTracking:(BOOL)suppressScrollTracking;
+- (void)stopSelectionAutoScroll;
+- (void)updateSelectionAutoScrollForDocumentLocation:(NSPoint)documentLocation
+                                             context:(PDFTabContext*)context;
 
 @end

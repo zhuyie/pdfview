@@ -17,15 +17,13 @@
 #include "mac/startup_view.h"
 #include "mac/tab_strip_view.h"
 #include "mac/tab_context.h"
+#include "mac/text_selection_controller.h"
 #include "mac/toolbar_view.h"
 
 namespace {
 
 constexpr float kMinimumManualScale = 0.1f;
 constexpr float kMaximumManualScale = 5.0f;
-constexpr CGFloat kSelectionAutoScrollEdgeInset = 36.0;
-constexpr CGFloat kSelectionAutoScrollMaxStep = 28.0;
-constexpr NSTimeInterval kSelectionAutoScrollTickInterval = 1.0 / 60.0;
 
 double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(
@@ -74,39 +72,15 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)installKeyMonitor;
 - (IBAction)openDocument:(id)sender;
 - (IBAction)copy:(id)sender;
+- (IBAction)selectAll:(id)sender;
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
 - (NSMenu*)selectionContextMenu;
 - (void)showSelectionContextMenuWithEvent:(NSEvent*)event;
 - (void)installStartupViewInHost:(NSView*)hostView;
-- (int)textIndexForPageSelectionAtPageIndex:(int)pageIndex
-                                   location:(NSPoint)location
-                                    context:(PDFTabContext*)context;
-- (void)updateTextSelectionAtPageIndex:(int)pageIndex
-                              location:(NSPoint)location
-                               context:(PDFTabContext*)context;
-- (BOOL)resolveDocumentSelectionPoint:(NSPoint)documentLocation
-                              context:(PDFTabContext*)context
-                            pageIndex:(int*)pageIndex
-                         pageLocation:(NSPoint*)pageLocation;
-- (BOOL)resolveDocumentSelectionFallback:(NSPoint)documentLocation
-                                 context:(PDFTabContext*)context
-                               pageIndex:(int*)pageIndex
-                               charIndex:(int*)charIndex;
 - (void)updateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
                                       context:(PDFTabContext*)context;
-- (void)startSelectionAutoScrollForContext:(PDFTabContext*)context;
-- (void)stopSelectionAutoScroll;
-- (void)updateSelectionAutoScrollForDocumentLocation:(NSPoint)documentLocation
-                                             context:(PDFTabContext*)context;
-- (void)handleSelectionAutoScrollTick:(NSTimer*)timer;
-- (void)selectWordAtPageIndex:(int)pageIndex
-                     location:(NSPoint)location
-                      context:(PDFTabContext*)context;
-- (void)applyTextSelectionForFocusPageIndex:(int)focusPageIndex
-                                   charIndex:(int)focusCharIndex
-                                     context:(PDFTabContext*)context;
 @end
 
 @implementation AppDelegate {
@@ -118,11 +92,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   PDFRecentDocumentsController* recentDocumentsController_;
   PDFDocumentWorkspaceController* workspaceController_;
   PDFDocumentInteractionController* interactionController_;
+  PDFTextSelectionController* textSelectionController_;
   PDFRenderCoordinator* renderCoordinator_;
   BOOL suppressScrollTracking_;
-  NSTimer* selectionAutoScrollTimer_;
-  PDFTabContext* selectionAutoScrollContext_;
-  NSPoint selectionAutoScrollDocumentLocation_;
   id keyMonitor_;
   id mouseMonitor_;
   int argc_;
@@ -139,11 +111,9 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     recentDocumentsController_ = [[PDFRecentDocumentsController alloc] initWithDelegate:self];
     workspaceController_ = nil;
     interactionController_ = [[PDFDocumentInteractionController alloc] initWithDelegate:self];
+    textSelectionController_ = [[PDFTextSelectionController alloc] init];
     renderCoordinator_ = [[PDFRenderCoordinator alloc] initWithDelegate:self];
     suppressScrollTracking_ = NO;
-    selectionAutoScrollTimer_ = nil;
-    selectionAutoScrollContext_ = nil;
-    selectionAutoScrollDocumentLocation_ = NSZeroPoint;
   }
   return self;
 }
@@ -220,6 +190,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSMenuItem* editMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
   [mainMenu addItem:editMenuItem];
   NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+  NSMenuItem* selectAllItem = [[NSMenuItem alloc] initWithTitle:@"Select All"
+                                                         action:@selector(selectAll:)
+                                                  keyEquivalent:@"a"];
+  [selectAllItem setTarget:self];
+  [editMenu addItem:selectAllItem];
+  [editMenu addItem:[NSMenuItem separatorItem]];
   NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
                                                     action:@selector(copy:)
                                              keyEquivalent:@"c"];
@@ -518,6 +494,22 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
   [pasteboard clearContents];
   [pasteboard setString:[context selectedText] forType:NSPasteboardTypeString];
+}
+
+- (IBAction)selectAll:(id)sender {
+  id firstResponder = [window_ firstResponder];
+  if ([toolbarStrip_ isEditingZoomField] &&
+      [firstResponder respondsToSelector:@selector(selectAll:)]) {
+    [firstResponder selectAll:sender];
+    return;
+  }
+
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil) {
+    return;
+  }
+
+  [textSelectionController_ selectAllTextInContext:context];
 }
 
 - (NSMenu*)selectionContextMenu {
@@ -944,296 +936,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   context->viewModel_.update_current_page_from_scroll();
 }
 
-- (int)textIndexForPageSelectionAtPageIndex:(int)pageIndex
-                                   location:(NSPoint)location
-                                    context:(PDFTabContext*)context {
-  if (context == nil ||
-      pageIndex < 0 ||
-      pageIndex >= static_cast<int>(context->viewModel_.page_frames().size()) ||
-      pageIndex >= static_cast<int>(context->viewModel_.page_sizes().size())) {
-    return -1;
-  }
-
-  float pageX = 0.0f;
-  float pageY = 0.0f;
-  if (!pdfview::core::page_point_from_page_view_point(
-          location.x,
-          location.y,
-          context->viewModel_.page_sizes()[pageIndex],
-          context->viewModel_.page_frames()[pageIndex],
-          &pageX,
-          &pageY)) {
-    return -1;
-  }
-
-  const float logicalScale = std::max(context->viewModel_.current_logical_scale(), 0.1f);
-  const float tolerance = 6.0f / logicalScale;
-  return context->viewModel_.document()->text_index_at_point(
-      pageIndex, pageX, pageY, tolerance, tolerance);
-}
-
-- (void)updateTextSelectionAtPageIndex:(int)pageIndex
-                              location:(NSPoint)location
-                               context:(PDFTabContext*)context {
-  if (context == nil || ![self isContextActive:context]) {
-    return;
-  }
-
-  const int charIndex = [self textIndexForPageSelectionAtPageIndex:pageIndex
-                                                          location:location
-                                                           context:context];
-  if (charIndex < 0) {
-    return;
-  }
-
-  if (!context->textSelection_.anchor.valid()) {
-    [context setTextSelectionAnchorPageIndex:pageIndex charIndex:charIndex];
-    return;
-  }
-
-  [self applyTextSelectionForFocusPageIndex:pageIndex charIndex:charIndex context:context];
-}
-
-- (BOOL)resolveDocumentSelectionPoint:(NSPoint)documentLocation
-                              context:(PDFTabContext*)context
-                            pageIndex:(int*)pageIndex
-                         pageLocation:(NSPoint*)pageLocation {
-  if (context == nil || pageIndex == NULL || pageLocation == NULL) {
-    return NO;
-  }
-
-  float pageX = 0.0f;
-  float pageY = 0.0f;
-  const bool resolved = pdfview::core::resolve_document_selection_point(
-      documentLocation.x,
-      documentLocation.y,
-      context->viewModel_.page_frames(),
-      pageIndex,
-      &pageX,
-      &pageY);
-  if (!resolved) {
-    return NO;
-  }
-
-  pageLocation->x = pageX;
-  pageLocation->y = pageY;
-  return YES;
-}
-
 - (void)updateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
                                       context:(PDFTabContext*)context {
-  [self updateSelectionAutoScrollForDocumentLocation:documentLocation context:context];
-
-  int pageIndex = -1;
-  NSPoint pageLocation = NSZeroPoint;
-  if (![self resolveDocumentSelectionPoint:documentLocation
-                                   context:context
-                                 pageIndex:&pageIndex
-                              pageLocation:&pageLocation]) {
-    int fallbackPageIndex = -1;
-    int fallbackCharIndex = -1;
-    if ([self resolveDocumentSelectionFallback:documentLocation
-                                       context:context
-                                     pageIndex:&fallbackPageIndex
-                                     charIndex:&fallbackCharIndex]) {
-      if (!context->textSelection_.anchor.valid()) {
-        [context setTextSelectionAnchorPageIndex:fallbackPageIndex charIndex:fallbackCharIndex];
-        return;
-      }
-      [self applyTextSelectionForFocusPageIndex:fallbackPageIndex
-                                      charIndex:fallbackCharIndex
-                                        context:context];
-    }
-    return;
-  }
-
-  [self updateTextSelectionAtPageIndex:pageIndex location:pageLocation context:context];
-}
-
-- (void)startSelectionAutoScrollForContext:(PDFTabContext*)context {
-  if (context == nil) {
-    return;
-  }
-
-  selectionAutoScrollContext_ = context;
-  if (selectionAutoScrollTimer_ != nil) {
-    return;
-  }
-
-  selectionAutoScrollTimer_ =
-      [NSTimer scheduledTimerWithTimeInterval:kSelectionAutoScrollTickInterval
-                                       target:self
-                                     selector:@selector(handleSelectionAutoScrollTick:)
-                                     userInfo:nil
-                                      repeats:YES];
-  [[NSRunLoop mainRunLoop] addTimer:selectionAutoScrollTimer_ forMode:NSRunLoopCommonModes];
-}
-
-- (void)stopSelectionAutoScroll {
-  if (selectionAutoScrollTimer_ != nil) {
-    [selectionAutoScrollTimer_ invalidate];
-    selectionAutoScrollTimer_ = nil;
-  }
-  selectionAutoScrollContext_ = nil;
-}
-
-- (void)updateSelectionAutoScrollForDocumentLocation:(NSPoint)documentLocation
-                                             context:(PDFTabContext*)context {
-  selectionAutoScrollDocumentLocation_ = documentLocation;
-  if (context == nil || !context->textSelection_.dragging) {
-    [self stopSelectionAutoScroll];
-    return;
-  }
-
-  NSClipView* clipView = [context->scrollView_ contentView];
-  const NSRect visibleBounds = [clipView bounds];
-  const CGFloat distanceToTop = documentLocation.y - visibleBounds.origin.y;
-  const CGFloat distanceToBottom =
-      NSMaxY(visibleBounds) - documentLocation.y;
-  const BOOL nearTop = distanceToTop < kSelectionAutoScrollEdgeInset;
-  const BOOL nearBottom = distanceToBottom < kSelectionAutoScrollEdgeInset;
-
-  if (!nearTop && !nearBottom) {
-    [self stopSelectionAutoScroll];
-    return;
-  }
-
-  [self startSelectionAutoScrollForContext:context];
-}
-
-- (void)handleSelectionAutoScrollTick:(NSTimer*)timer {
-  if (timer != selectionAutoScrollTimer_ || selectionAutoScrollContext_ == nil) {
-    return;
-  }
-
-  PDFTabContext* context = selectionAutoScrollContext_;
-  NSClipView* clipView = [context->scrollView_ contentView];
-  const NSRect visibleBounds = [clipView bounds];
-  const CGFloat distanceToTop =
-      selectionAutoScrollDocumentLocation_.y - visibleBounds.origin.y;
-  const CGFloat distanceToBottom =
-      NSMaxY(visibleBounds) - selectionAutoScrollDocumentLocation_.y;
-
-  CGFloat scrollDelta = 0.0;
-  if (distanceToTop < kSelectionAutoScrollEdgeInset) {
-    const CGFloat intensity =
-        std::max((kSelectionAutoScrollEdgeInset - distanceToTop) / kSelectionAutoScrollEdgeInset,
-                 0.0);
-    scrollDelta = -std::max(intensity * kSelectionAutoScrollMaxStep, 1.0);
-  } else if (distanceToBottom < kSelectionAutoScrollEdgeInset) {
-    const CGFloat intensity =
-        std::max((kSelectionAutoScrollEdgeInset - distanceToBottom) /
-                     kSelectionAutoScrollEdgeInset,
-                 0.0);
-    scrollDelta = std::max(intensity * kSelectionAutoScrollMaxStep, 1.0);
-  } else {
-    [self stopSelectionAutoScroll];
-    return;
-  }
-
-  const CGFloat maxScrollY =
-      std::max(static_cast<CGFloat>(context->viewModel_.layout_result().document_height) -
-                   visibleBounds.size.height,
-               static_cast<CGFloat>(0.0));
-  const CGFloat targetOriginY =
-      std::min(std::max(visibleBounds.origin.y + scrollDelta, 0.0), maxScrollY);
-  if (std::abs(targetOriginY - visibleBounds.origin.y) < 0.5f) {
-    return;
-  }
-
-  suppressScrollTracking_ = YES;
-  [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
-  [context->scrollView_ reflectScrolledClipView:clipView];
-  suppressScrollTracking_ = NO;
-  [self updateCurrentPageFromScrollForContext:context];
-  [self updateVisiblePagesForContext:context];
-
-  const NSPoint windowLocation = [window_ mouseLocationOutsideOfEventStream];
-  const NSPoint documentLocation =
-      [context->documentView_ convertPoint:windowLocation fromView:nil];
-  selectionAutoScrollDocumentLocation_ = documentLocation;
-  [self updateTextSelectionAtDocumentLocation:documentLocation context:context];
-}
-
-- (BOOL)resolveDocumentSelectionFallback:(NSPoint)documentLocation
-                                 context:(PDFTabContext*)context
-                               pageIndex:(int*)pageIndex
-                               charIndex:(int*)charIndex {
-  if (context == nil || pageIndex == NULL || charIndex == NULL) {
-    return NO;
-  }
-
-  return pdfview::core::resolve_document_selection_fallback(
-      documentLocation.y,
-      context->textSelection_.anchor.page_index,
-      context->viewModel_.page_frames(),
-      *context->viewModel_.document(),
-      pageIndex,
-      charIndex);
-}
-
-- (void)applyTextSelectionForFocusPageIndex:(int)focusPageIndex
-                                   charIndex:(int)focusCharIndex
-                                     context:(PDFTabContext*)context {
-  if (context == nil || focusPageIndex < 0 || focusCharIndex < 0) {
-    return;
-  }
-
-  pdfview::core::TextSelectionEndpoint anchor = context->textSelection_.anchor;
-  pdfview::core::TextSelectionEndpoint focus;
-  focus.page_index = focusPageIndex;
-  focus.char_index = focusCharIndex;
-
-  const pdfview::core::TextSelectionRange range =
-      pdfview::core::make_text_selection_range(anchor, focus);
-  if (range.empty()) {
-    [context updateTextSelectionWithFocusPageIndex:focusPageIndex
-                                         charIndex:focusCharIndex
-                                             text:std::string()
-                                             spans:std::vector<pdfview::core::PageTextSelectionSpan>()];
-    return;
-  }
-
-  const pdfview::core::DocumentTextSelection selection =
-      pdfview::core::build_document_text_selection(*context->viewModel_.document(), range);
-
-  [context updateTextSelectionWithFocusPageIndex:focusPageIndex
-                                       charIndex:focusCharIndex
-                                            text:selection.text
-                                           spans:selection.spans];
-}
-
-- (void)selectWordAtPageIndex:(int)pageIndex
-                     location:(NSPoint)location
-                      context:(PDFTabContext*)context {
-  if (context == nil || ![self isContextActive:context]) {
-    return;
-  }
-
-  const int charIndex = [self textIndexForPageSelectionAtPageIndex:pageIndex
-                                                          location:location
+  [interactionController_ updateSelectionAutoScrollForDocumentLocation:documentLocation
+                                                               context:context];
+  [textSelectionController_ refreshTextSelectionAtDocumentLocation:documentLocation
                                                            context:context];
-  if (charIndex < 0) {
-    [context clearTextSelection];
-    return;
-  }
-
-  const pdfview::core::PageTextSelection selection =
-      context->viewModel_.document()->word_selection_at_index(pageIndex, charIndex);
-  if (!selection.ok()) {
-    [context clearTextSelection];
-    return;
-  }
-
-  [context beginTextSelectionOnPageIndex:pageIndex charIndex:selection.start_index];
-  std::vector<pdfview::core::PageTextSelectionSpan> spans(1);
-  spans[0].page_index = pageIndex;
-  spans[0].rects = selection.rects;
-  [context updateTextSelectionWithFocusPageIndex:pageIndex
-                                       charIndex:selection.start_index + selection.count - 1
-                                            text:selection.text
-                                           spans:spans];
-  [context endTextSelection];
 }
 
 - (void)tabClipViewDidScroll:(NSNotification*)notification {
@@ -1352,7 +1060,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   (void)notification;
   pdfview::core::flush_render_profile_summary();
   [[NSNotificationCenter defaultCenter] removeObserver:self];
-  [self stopSelectionAutoScroll];
+  [interactionController_ stopSelectionAutoScroll];
   [interactionController_ cancelInteractiveRendering];
   [interactionController_ hidePageIndicator];
   if (keyMonitor_ != nil) {
@@ -1404,6 +1112,10 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return hasActiveDocument;
   }
 
+  if (action == @selector(selectAll:)) {
+    return [toolbarStrip_ isEditingZoomField] || hasActiveDocument;
+  }
+
   if (action == @selector(copy:)) {
     PDFTabContext* context = [workspaceController_ activeContext];
     return context != nil && [context hasSelectedText];
@@ -1428,25 +1140,60 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self updateCurrentPageFromScrollForContext:context];
 }
 
+- (BOOL)documentInteractionControllerPerformSelectionAutoScrollForContext:(PDFTabContext*)context
+                                                                   deltaY:(CGFloat)deltaY {
+  if (context == nil) {
+    return NO;
+  }
+
+  NSClipView* clipView = [context->scrollView_ contentView];
+  const NSRect visibleBounds = [clipView bounds];
+  const CGFloat maxScrollY =
+      std::max(static_cast<CGFloat>(context->viewModel_.layout_result().document_height) -
+                   visibleBounds.size.height,
+               static_cast<CGFloat>(0.0));
+  const CGFloat targetOriginY =
+      std::min(std::max(visibleBounds.origin.y + deltaY, 0.0), maxScrollY);
+  if (std::abs(targetOriginY - visibleBounds.origin.y) < 0.5f) {
+    return NO;
+  }
+
+  suppressScrollTracking_ = YES;
+  [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
+  [context->scrollView_ reflectScrolledClipView:clipView];
+  suppressScrollTracking_ = NO;
+  [self updateCurrentPageFromScrollForContext:context];
+  [self updateVisiblePagesForContext:context];
+  return YES;
+}
+
+- (void)documentInteractionControllerUpdateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
+                                                                   context:(PDFTabContext*)context {
+  [textSelectionController_ refreshTextSelectionAtDocumentLocation:documentLocation
+                                                           context:context];
+}
+
 - (void)pageViewHostDidBeginTextSelectionAtPageIndex:(int)pageIndex location:(NSPoint)location {
   PDFTabContext* context = [workspaceController_ activeContext];
   if (context == nil || ![self isContextActive:context]) {
     return;
   }
 
-  [self stopSelectionAutoScroll];
+  [interactionController_ stopSelectionAutoScroll];
   [interactionController_ cancelInteractiveRendering];
-  const int charIndex = [self textIndexForPageSelectionAtPageIndex:pageIndex
-                                                          location:location
-                                                           context:context];
+  const int charIndex = [textSelectionController_ textIndexForPageSelectionAtPageIndex:pageIndex
+                                                                               location:location
+                                                                                context:context];
   [context beginTextSelectionOnPageIndex:pageIndex charIndex:charIndex];
 }
 
 - (void)pageViewHostDidDoubleClickTextAtPageIndex:(int)pageIndex location:(NSPoint)location {
   PDFTabContext* context = [workspaceController_ activeContext];
-  [self stopSelectionAutoScroll];
+  [interactionController_ stopSelectionAutoScroll];
   [interactionController_ cancelInteractiveRendering];
-  [self selectWordAtPageIndex:pageIndex location:location context:context];
+  [textSelectionController_ selectWordAtPageIndex:pageIndex
+                                         location:location
+                                          context:context];
 }
 
 - (void)pageViewHostDidRequestContextMenuAtPageIndex:(int)pageIndex
@@ -1467,7 +1214,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (void)pageViewHostDidEndTextSelectionAtDocumentLocation:(NSPoint)location {
   PDFTabContext* context = [workspaceController_ activeContext];
   [self updateTextSelectionAtDocumentLocation:location context:context];
-  [self stopSelectionAutoScroll];
+  [interactionController_ stopSelectionAutoScroll];
   [context endTextSelection];
 }
 
