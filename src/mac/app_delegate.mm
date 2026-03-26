@@ -77,6 +77,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 - (IBAction)clearRecentDocuments:(id)sender;
 - (IBAction)closeCurrentTab:(id)sender;
 - (IBAction)showHelp:(id)sender;
+- (NSMenu*)selectionContextMenu;
+- (void)showSelectionContextMenuWithEvent:(NSEvent*)event;
 - (void)installStartupViewInHost:(NSView*)hostView;
 - (int)textIndexForPageSelectionAtPageIndex:(int)pageIndex
                                    location:(NSPoint)location
@@ -516,6 +518,31 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
   [pasteboard clearContents];
   [pasteboard setString:[context selectedText] forType:NSPasteboardTypeString];
+}
+
+- (NSMenu*)selectionContextMenu {
+  NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Selection"];
+  NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                    action:@selector(copy:)
+                                             keyEquivalent:@""];
+  [copyItem setTarget:self];
+  [menu addItem:copyItem];
+  return menu;
+}
+
+- (void)showSelectionContextMenuWithEvent:(NSEvent*)event {
+  if (event == nil) {
+    return;
+  }
+
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![context hasSelectedText]) {
+    return;
+  }
+
+  [NSMenu popUpContextMenu:[self selectionContextMenu]
+                 withEvent:event
+                   forView:context->documentView_];
 }
 
 - (void)startupViewDidRequestOpenDocument {
@@ -1494,6 +1521,16 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self stopSelectionAutoScroll];
   [interactionController_ cancelInteractiveRendering];
   [self selectWordAtPageIndex:pageIndex location:location context:context];
+}
+
+- (void)pageViewHostDidRequestContextMenuAtPageIndex:(int)pageIndex
+                                            location:(NSPoint)location
+                                               event:(NSEvent*)event {
+  PDFTabContext* context = [workspaceController_ activeContext];
+  if (context == nil || ![context selectionContainsPageIndex:pageIndex location:location]) {
+    return;
+  }
+  [self showSelectionContextMenuWithEvent:event];
 }
 
 - (void)pageViewHostDidUpdateTextSelectionAtDocumentLocation:(NSPoint)location {

@@ -12,6 +12,9 @@
                                             location:(NSPoint)location;
 - (void)pageViewHostDidDoubleClickTextAtPageIndex:(int)pageIndex
                                          location:(NSPoint)location;
+- (void)pageViewHostDidRequestContextMenuAtPageIndex:(int)pageIndex
+                                            location:(NSPoint)location
+                                               event:(NSEvent*)event;
 - (void)pageViewHostDidUpdateTextSelectionAtDocumentLocation:(NSPoint)location;
 - (void)pageViewHostDidEndTextSelectionAtDocumentLocation:(NSPoint)location;
 

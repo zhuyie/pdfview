@@ -261,4 +261,33 @@ namespace {
   return [NSString stringWithUTF8String:textSelection_.text.c_str()];
 }
 
+- (BOOL)selectionContainsPageIndex:(int)pageIndex location:(NSPoint)location {
+  if (pageIndex < 0) {
+    return NO;
+  }
+
+  for (size_t spanIndex = 0; spanIndex < textSelection_.spans.size(); ++spanIndex) {
+    const pdfview::core::PageTextSelectionSpan& span = textSelection_.spans[spanIndex];
+    if (span.page_index != pageIndex ||
+        span.page_index >= static_cast<int>(viewModel_.page_frames().size()) ||
+        span.page_index >= static_cast<int>(viewModel_.page_sizes().size())) {
+      continue;
+    }
+
+    const std::vector<pdfview::core::ViewRect> selectionRects =
+        pdfview::core::page_text_rects_to_page_view_rects(span.rects,
+                                                          viewModel_.page_sizes()[span.page_index],
+                                                          viewModel_.page_frames()[span.page_index]);
+    for (size_t rectIndex = 0; rectIndex < selectionRects.size(); ++rectIndex) {
+      const pdfview::core::ViewRect& rect = selectionRects[rectIndex];
+      if (location.x >= rect.x && location.x <= rect.x + rect.width &&
+          location.y >= rect.y && location.y <= rect.y + rect.height) {
+        return YES;
+      }
+    }
+  }
+
+  return NO;
+}
+
 @end

@@ -84,5 +84,6 @@ struct TextSelectionState {
 - (void)syncTextSelectionOverlay;
 - (BOOL)hasSelectedText;
 - (NSString*)selectedText;
+- (BOOL)selectionContainsPageIndex:(int)pageIndex location:(NSPoint)location;
 
 @end

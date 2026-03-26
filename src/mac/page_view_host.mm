@@ -98,6 +98,15 @@ NSRect NSRectFromViewRect(const pdfview::core::ViewRect& rect) {
   }
 }
 
+- (void)rightMouseDown:(NSEvent*)event {
+  if (self.selectionDelegate != nil) {
+    [self.selectionDelegate pageViewHostDidRequestContextMenuAtPageIndex:self.pageIndex
+                                                                location:[self convertPoint:[event locationInWindow]
+                                                                                     fromView:nil]
+                                                                   event:event];
+  }
+}
+
 @end
 
 @implementation PDFPageViewHost {
