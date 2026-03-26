@@ -174,13 +174,13 @@ namespace {
 }
 
 - (void)beginTextSelectionOnPageIndex:(int)pageIndex charIndex:(int)charIndex {
-  const int previousAnchorPageIndex = textSelection_.anchorPageIndex;
-  const int previousFocusPageIndex = textSelection_.focusPageIndex;
+  const int previousAnchorPageIndex = textSelection_.anchor.page_index;
+  const int previousFocusPageIndex = textSelection_.focus.page_index;
   textSelection_.dragging = true;
-  textSelection_.anchorPageIndex = pageIndex;
-  textSelection_.anchorCharIndex = charIndex;
-  textSelection_.focusPageIndex = pageIndex;
-  textSelection_.focusCharIndex = charIndex;
+  textSelection_.anchor.page_index = pageIndex;
+  textSelection_.anchor.char_index = charIndex;
+  textSelection_.focus.page_index = pageIndex;
+  textSelection_.focus.char_index = charIndex;
   textSelection_.text.clear();
   textSelection_.spans.clear();
   if (previousAnchorPageIndex >= 0) {
@@ -193,18 +193,18 @@ namespace {
 }
 
 - (void)setTextSelectionAnchorPageIndex:(int)pageIndex charIndex:(int)charIndex {
-  textSelection_.anchorPageIndex = pageIndex;
-  textSelection_.anchorCharIndex = charIndex;
-  textSelection_.focusPageIndex = pageIndex;
-  textSelection_.focusCharIndex = charIndex;
+  textSelection_.anchor.page_index = pageIndex;
+  textSelection_.anchor.char_index = charIndex;
+  textSelection_.focus.page_index = pageIndex;
+  textSelection_.focus.char_index = charIndex;
 }
 
 - (void)updateTextSelectionWithFocusPageIndex:(int)pageIndex
                                     charIndex:(int)charIndex
-                                         text:(const std::string&)text
+                                        text:(const std::string&)text
                                         spans:(const std::vector<pdfview::core::PageTextSelectionSpan>&)spans {
-  textSelection_.focusPageIndex = pageIndex;
-  textSelection_.focusCharIndex = charIndex;
+  textSelection_.focus.page_index = pageIndex;
+  textSelection_.focus.char_index = charIndex;
   textSelection_.text = text;
   textSelection_.spans = spans;
   [self syncTextSelectionOverlay];
@@ -215,12 +215,12 @@ namespace {
 }
 
 - (void)clearTextSelection {
-  const int selectedAnchorPageIndex = textSelection_.anchorPageIndex;
-  const int selectedFocusPageIndex = textSelection_.focusPageIndex;
+  const int selectedAnchorPageIndex = textSelection_.anchor.page_index;
+  const int selectedFocusPageIndex = textSelection_.focus.page_index;
   for (size_t index = 0; index < textSelection_.spans.size(); ++index) {
     [pageViewHost_ clearSelectionAtIndex:textSelection_.spans[index].page_index];
   }
-  textSelection_ = TextSelectionState();
+  textSelection_ = pdfview::core::TextSelectionState();
   if (selectedAnchorPageIndex >= 0) {
     [pageViewHost_ clearSelectionAtIndex:selectedAnchorPageIndex];
   }
@@ -251,7 +251,7 @@ namespace {
 }
 
 - (BOOL)hasSelectedText {
-  return !textSelection_.text.empty();
+  return textSelection_.has_selected_text();
 }
 
 - (NSString*)selectedText {

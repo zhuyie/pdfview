@@ -986,7 +986,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  if (context->textSelection_.anchorCharIndex < 0) {
+  if (!context->textSelection_.anchor.valid()) {
     [context setTextSelectionAnchorPageIndex:pageIndex charIndex:charIndex];
     return;
   }
@@ -1002,21 +1002,22 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return NO;
   }
 
-  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
-  for (int index = 0; index < static_cast<int>(pageFrames.size()); ++index) {
-    const pdfview::core::ViewRect& frame = pageFrames[index];
-    if (documentLocation.x < frame.x || documentLocation.x > frame.x + frame.width ||
-        documentLocation.y < frame.y || documentLocation.y > frame.y + frame.height) {
-      continue;
-    }
-
-    *pageIndex = index;
-    pageLocation->x = documentLocation.x - frame.x;
-    pageLocation->y = documentLocation.y - frame.y;
-    return YES;
+  float pageX = 0.0f;
+  float pageY = 0.0f;
+  const bool resolved = pdfview::core::resolve_document_selection_point(
+      documentLocation.x,
+      documentLocation.y,
+      context->viewModel_.page_frames(),
+      pageIndex,
+      &pageX,
+      &pageY);
+  if (!resolved) {
+    return NO;
   }
 
-  return NO;
+  pageLocation->x = pageX;
+  pageLocation->y = pageY;
+  return YES;
 }
 
 - (void)updateTextSelectionAtDocumentLocation:(NSPoint)documentLocation
@@ -1035,7 +1036,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
                                        context:context
                                      pageIndex:&fallbackPageIndex
                                      charIndex:&fallbackCharIndex]) {
-      if (context->textSelection_.anchorCharIndex < 0) {
+      if (!context->textSelection_.anchor.valid()) {
         [context setTextSelectionAnchorPageIndex:fallbackPageIndex charIndex:fallbackCharIndex];
         return;
       }
@@ -1162,48 +1163,13 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return NO;
   }
 
-  const std::vector<pdfview::core::ViewRect>& pageFrames = context->viewModel_.page_frames();
-  if (pageFrames.empty()) {
-    return NO;
-  }
-
-  const int anchorPageIndex = context->textSelection_.anchorPageIndex;
-  const bool preferForward =
-      anchorPageIndex >= 0 &&
-      documentLocation.y >= pageFrames[std::min(anchorPageIndex,
-                                                static_cast<int>(pageFrames.size()) - 1)].y;
-
-  int candidatePageIndex = -1;
-  if (preferForward) {
-    for (int index = 0; index < static_cast<int>(pageFrames.size()); ++index) {
-      if (documentLocation.y < pageFrames[index].y) {
-        candidatePageIndex = index;
-        break;
-      }
-    }
-    if (candidatePageIndex < 0) {
-      candidatePageIndex = static_cast<int>(pageFrames.size()) - 1;
-    }
-  } else {
-    for (int index = static_cast<int>(pageFrames.size()) - 1; index >= 0; --index) {
-      if (documentLocation.y >= pageFrames[index].y + pageFrames[index].height) {
-        candidatePageIndex = index;
-        break;
-      }
-    }
-    if (candidatePageIndex < 0) {
-      candidatePageIndex = 0;
-    }
-  }
-
-  const int pageCharCount = context->viewModel_.document()->page_text_char_count(candidatePageIndex);
-  if (pageCharCount <= 0) {
-    return NO;
-  }
-
-  *pageIndex = candidatePageIndex;
-  *charIndex = preferForward ? 0 : pageCharCount - 1;
-  return *charIndex >= 0;
+  return pdfview::core::resolve_document_selection_fallback(
+      documentLocation.y,
+      context->textSelection_.anchor.page_index,
+      context->viewModel_.page_frames(),
+      *context->viewModel_.document(),
+      pageIndex,
+      charIndex);
 }
 
 - (void)applyTextSelectionForFocusPageIndex:(int)focusPageIndex
@@ -1213,10 +1179,7 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
     return;
   }
 
-  pdfview::core::TextSelectionEndpoint anchor;
-  anchor.page_index = context->textSelection_.anchorPageIndex;
-  anchor.char_index = context->textSelection_.anchorCharIndex;
-
+  pdfview::core::TextSelectionEndpoint anchor = context->textSelection_.anchor;
   pdfview::core::TextSelectionEndpoint focus;
   focus.page_index = focusPageIndex;
   focus.char_index = focusCharIndex;
@@ -1226,55 +1189,18 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   if (range.empty()) {
     [context updateTextSelectionWithFocusPageIndex:focusPageIndex
                                          charIndex:focusCharIndex
-                                              text:std::string()
+                                             text:std::string()
                                              spans:std::vector<pdfview::core::PageTextSelectionSpan>()];
     return;
   }
 
-  std::string selectedText;
-  std::vector<pdfview::core::PageTextSelectionSpan> spans;
-  for (int pageIndex = range.start.page_index; pageIndex <= range.end.page_index; ++pageIndex) {
-    const int pageCharCount = context->viewModel_.document()->page_text_char_count(pageIndex);
-    if (pageCharCount <= 0) {
-      continue;
-    }
-
-    int pageStartIndex = 0;
-    int pageCount = pageCharCount;
-    if (pageIndex == range.start.page_index) {
-      pageStartIndex = range.start.char_index;
-      pageCount = pageCharCount - pageStartIndex;
-    }
-    if (pageIndex == range.end.page_index) {
-      const int endCount = range.end.char_index - pageStartIndex + 1;
-      pageCount = std::min(pageCount, endCount);
-    }
-    if (pageCount <= 0) {
-      continue;
-    }
-
-    const pdfview::core::PageTextSelection selection =
-        context->viewModel_.document()->text_selection_for_range(
-            pageIndex, pageStartIndex, pageCount);
-    if (!selection.ok()) {
-      continue;
-    }
-
-    if (!selectedText.empty()) {
-      selectedText += "\n";
-    }
-    selectedText += selection.text;
-
-    pdfview::core::PageTextSelectionSpan span;
-    span.page_index = pageIndex;
-    span.rects = selection.rects;
-    spans.push_back(span);
-  }
+  const pdfview::core::DocumentTextSelection selection =
+      pdfview::core::build_document_text_selection(*context->viewModel_.document(), range);
 
   [context updateTextSelectionWithFocusPageIndex:focusPageIndex
                                        charIndex:focusCharIndex
-                                            text:selectedText
-                                           spans:spans];
+                                            text:selection.text
+                                           spans:selection.spans];
 }
 
 - (void)selectWordAtPageIndex:(int)pageIndex

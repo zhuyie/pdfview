@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/document_view_model.h"
+#include "core/text_selection.h"
 #include "mac/page_view_host.h"
 
 struct PageRenderCacheEntry {
@@ -13,23 +14,6 @@ struct PageRenderCacheEntry {
   long long requestId;
 
   PageRenderCacheEntry() : image(nil), requestId(0) {}
-};
-
-struct TextSelectionState {
-  bool dragging;
-  int anchorPageIndex;
-  int anchorCharIndex;
-  int focusPageIndex;
-  int focusCharIndex;
-  std::string text;
-  std::vector<pdfview::core::PageTextSelectionSpan> spans;
-
-  TextSelectionState()
-      : dragging(false),
-        anchorPageIndex(-1),
-        anchorCharIndex(-1),
-        focusPageIndex(-1),
-        focusCharIndex(-1) {}
 };
 
 @interface FlippedDocumentView : NSView
@@ -46,7 +30,7 @@ struct TextSelectionState {
   PDFPageViewHost* pageViewHost_;
   std::vector<PageRenderCacheEntry> pageCache_;
   pdfview::core::RenderPlanFingerprint lastRenderPlanFingerprint_;
-  TextSelectionState textSelection_;
+  pdfview::core::TextSelectionState textSelection_;
 }
 
 - (instancetype)initWithDocument:(const pdfview::core::DocumentPtr&)document

@@ -139,6 +139,132 @@ TextSelectionRange make_text_selection_range(const TextSelectionEndpoint& anchor
   return range;
 }
 
+DocumentTextSelection build_document_text_selection(const Document& document,
+                                                    const TextSelectionRange& range) {
+  DocumentTextSelection result;
+  if (range.empty()) {
+    return result;
+  }
+
+  for (int page_index = range.start.page_index; page_index <= range.end.page_index; ++page_index) {
+    const int page_char_count = document.page_text_char_count(page_index);
+    if (page_char_count <= 0) {
+      continue;
+    }
+
+    int page_start_index = 0;
+    int page_count = page_char_count;
+    if (page_index == range.start.page_index) {
+      page_start_index = range.start.char_index;
+      page_count = page_char_count - page_start_index;
+    }
+    if (page_index == range.end.page_index) {
+      const int end_count = range.end.char_index - page_start_index + 1;
+      page_count = std::min(page_count, end_count);
+    }
+    if (page_count <= 0) {
+      continue;
+    }
+
+    const PageTextSelection selection =
+        document.text_selection_for_range(page_index, page_start_index, page_count);
+    if (!selection.ok()) {
+      continue;
+    }
+
+    if (!result.text.empty()) {
+      result.text += "\n";
+    }
+    result.text += selection.text;
+
+    PageTextSelectionSpan span;
+    span.page_index = page_index;
+    span.rects = selection.rects;
+    result.spans.push_back(span);
+  }
+
+  return result;
+}
+
+bool resolve_document_selection_point(float document_x,
+                                      float document_y,
+                                      const std::vector<ViewRect>& page_frames,
+                                      int* page_index,
+                                      float* page_x,
+                                      float* page_y) {
+  if (page_index == NULL || page_x == NULL || page_y == NULL) {
+    return false;
+  }
+
+  for (int index = 0; index < static_cast<int>(page_frames.size()); ++index) {
+    const ViewRect& frame = page_frames[index];
+    if (document_x < frame.x || document_x > frame.x + frame.width ||
+        document_y < frame.y || document_y > frame.y + frame.height) {
+      continue;
+    }
+
+    *page_index = index;
+    *page_x = document_x - frame.x;
+    *page_y = document_y - frame.y;
+    return true;
+  }
+
+  return false;
+}
+
+bool resolve_document_selection_fallback(float document_y,
+                                         int anchor_page_index,
+                                         const std::vector<ViewRect>& page_frames,
+                                         const Document& document,
+                                         int* page_index,
+                                         int* char_index) {
+  if (page_index == NULL || char_index == NULL || page_frames.empty()) {
+    return false;
+  }
+
+  const bool prefer_forward =
+      anchor_page_index >= 0 &&
+      document_y >= page_frames[std::min(anchor_page_index,
+                                         static_cast<int>(page_frames.size()) - 1)].y;
+
+  int candidate_page_index = -1;
+  if (prefer_forward) {
+    for (int index = 0; index < static_cast<int>(page_frames.size()); ++index) {
+      if (document_y < page_frames[index].y) {
+        candidate_page_index = index;
+        break;
+      }
+    }
+    if (candidate_page_index < 0) {
+      candidate_page_index = static_cast<int>(page_frames.size()) - 1;
+    }
+  } else {
+    for (int index = static_cast<int>(page_frames.size()) - 1; index >= 0; --index) {
+      if (document_y >= page_frames[index].y + page_frames[index].height) {
+        candidate_page_index = index;
+        break;
+      }
+    }
+    if (candidate_page_index < 0) {
+      candidate_page_index = 0;
+    }
+  }
+
+  const int step = prefer_forward ? 1 : -1;
+  while (candidate_page_index >= 0 &&
+         candidate_page_index < static_cast<int>(page_frames.size())) {
+    const int page_char_count = document.page_text_char_count(candidate_page_index);
+    if (page_char_count > 0) {
+      *page_index = candidate_page_index;
+      *char_index = prefer_forward ? 0 : page_char_count - 1;
+      return *char_index >= 0;
+    }
+    candidate_page_index += step;
+  }
+
+  return false;
+}
+
 bool page_point_from_page_view_point(float view_x,
                                      float view_y,
                                      const PageSize& page_size,
