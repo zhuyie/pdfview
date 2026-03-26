@@ -989,6 +989,25 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   return YES;
 }
 
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+  (void)sender;
+  const NSUInteger tabCount = [workspaceController_ tabCount];
+  if (tabCount <= 1) {
+    return NSTerminateNow;
+  }
+
+  NSAlert* alert = [[NSAlert alloc] init];
+  [alert setAlertStyle:NSAlertStyleWarning];
+  [alert setMessageText:@"Quit PDFView?"];
+  [alert setInformativeText:[NSString stringWithFormat:@"Close %lu open tabs and quit PDFView?",
+                                                       static_cast<unsigned long>(tabCount)]];
+  [alert addButtonWithTitle:@"Quit"];
+  [alert addButtonWithTitle:@"Cancel"];
+  [alert setShowsSuppressionButton:NO];
+
+  return [alert runModal] == NSAlertFirstButtonReturn ? NSTerminateNow : NSTerminateCancel;
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
   SEL action = [menuItem action];
   const BOOL hasActiveDocument = [workspaceController_ activeContext] != nil;
