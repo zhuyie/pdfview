@@ -97,6 +97,26 @@ bool DocumentViewModel::should_reduce_interactive_scale(float device_scale) cons
     return false;
   }
 
+  const float full_render_scale = current_logical_scale() * device_scale;
+  bool visible_range_fully_rendered = !cache_plan.visible_range.empty();
+  for (int page_index = cache_plan.visible_range.start;
+       page_index < cache_plan.visible_range.end;
+       ++page_index) {
+    if (page_index < 0 || page_index >= static_cast<int>(page_cache_states_.size())) {
+      visible_range_fully_rendered = false;
+      break;
+    }
+
+    const PageCacheSlotState& state = page_cache_states_[page_index];
+    if (!state.loaded || !cache_covers_render_scale(state, full_render_scale)) {
+      visible_range_fully_rendered = false;
+      break;
+    }
+  }
+  if (visible_range_fully_rendered) {
+    return false;
+  }
+
   double total_visible_pixels = 0.0;
   double max_page_pixels = 0.0;
   for (int page_index = cache_plan.preload_range.start;

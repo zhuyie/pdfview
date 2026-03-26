@@ -762,10 +762,19 @@ bool TestDocumentViewModelInteractiveScaleHeuristic() {
   view_model.relayout();
   view_model.set_scroll_origin(0.0f, 0.0f);
 
-  return Expect(view_model.should_reduce_interactive_scale(2.0f),
-                "interactive scale heuristic should downscale large high-DPI pages") &&
-         Expect(!view_model.should_reduce_interactive_scale(1.0f),
-                "interactive scale heuristic should not trigger at 1x device scale");
+  const bool reduces_large_pages =
+      Expect(view_model.should_reduce_interactive_scale(2.0f),
+             "interactive scale heuristic should downscale large high-DPI pages");
+  const bool keeps_1x_full_scale =
+      Expect(!view_model.should_reduce_interactive_scale(1.0f),
+             "interactive scale heuristic should not trigger at 1x device scale");
+
+  pdfview::core::mark_page_cache_rendered(view_model.mutable_page_cache_states(), 0, 2.0f);
+  const bool keeps_visible_hq_cache =
+      Expect(!view_model.should_reduce_interactive_scale(2.0f),
+             "interactive scale heuristic should reuse visible high-quality page caches");
+
+  return reduces_large_pages && keeps_1x_full_scale && keeps_visible_hq_cache;
 }
 
 bool TestFitPageScale() {
