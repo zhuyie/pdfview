@@ -75,6 +75,37 @@ float DocumentViewModel::current_render_scale() const {
   return current_logical_scale() * device_scale_;
 }
 
+bool DocumentViewModel::should_reduce_interactive_scale(float device_scale) const {
+  if (device_scale <= 1.0f || layout_result_.page_frames.empty()) {
+    return false;
+  }
+
+  const ViewRect rect = visible_rect();
+  const PageCachePlan cache_plan = page_cache_plan(rect.height * 0.5f);
+  if (cache_plan.preload_range.empty()) {
+    return false;
+  }
+
+  double total_visible_pixels = 0.0;
+  double max_page_pixels = 0.0;
+  for (int page_index = cache_plan.preload_range.start;
+       page_index < cache_plan.preload_range.end;
+       ++page_index) {
+    if (page_index < 0 || page_index >= static_cast<int>(layout_result_.page_frames.size())) {
+      continue;
+    }
+
+    const ViewRect& frame = layout_result_.page_frames[page_index];
+    const double page_pixels =
+        static_cast<double>(frame.width) * static_cast<double>(frame.height) *
+        static_cast<double>(device_scale) * static_cast<double>(device_scale);
+    total_visible_pixels += page_pixels;
+    max_page_pixels = std::max(max_page_pixels, page_pixels);
+  }
+
+  return max_page_pixels >= 2500000.0 || total_visible_pixels >= 5000000.0;
+}
+
 void DocumentViewModel::relayout() {
   PageLayoutConfig layout_config;
   layout_config.viewport_width = viewport_width_;

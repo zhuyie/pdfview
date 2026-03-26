@@ -41,6 +41,7 @@ class DocumentViewModel {
   float fit_page_scale() const;
   float current_logical_scale() const;
   float current_render_scale() const;
+  bool should_reduce_interactive_scale(float device_scale) const;
 
   void relayout();
   void set_scroll_origin(float x, float y);

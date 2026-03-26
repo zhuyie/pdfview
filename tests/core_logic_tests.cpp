@@ -370,6 +370,27 @@ bool TestDocumentViewModelPageIndicatorText() {
                 "page indicator text should format the current page and total pages");
 }
 
+bool TestDocumentViewModelInteractiveScaleHeuristic() {
+  std::vector<pdfview::core::PageSize> page_sizes(2);
+  page_sizes[0].width = 1200.0f;
+  page_sizes[0].height = 1800.0f;
+  page_sizes[1].width = 1200.0f;
+  page_sizes[1].height = 1800.0f;
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.set_viewport_size(1400.0f, 900.0f);
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::Manual;
+  view_model.mutable_view_state()->zoom = 1.0f;
+  view_model.relayout();
+  view_model.set_scroll_origin(0.0f, 0.0f);
+
+  return Expect(view_model.should_reduce_interactive_scale(2.0f),
+                "interactive scale heuristic should downscale large high-DPI pages") &&
+         Expect(!view_model.should_reduce_interactive_scale(1.0f),
+                "interactive scale heuristic should not trigger at 1x device scale");
+}
+
 bool TestFitPageScale() {
   std::vector<pdfview::core::PageSize> page_sizes(2);
   page_sizes[0].width = 400.0f;
@@ -526,6 +547,9 @@ int main() {
     return 1;
   }
   if (!TestDocumentViewModelPageIndicatorText()) {
+    return 1;
+  }
+  if (!TestDocumentViewModelInteractiveScaleHeuristic()) {
     return 1;
   }
   if (!TestPageCachePlanKeepsNeighborPages()) {
