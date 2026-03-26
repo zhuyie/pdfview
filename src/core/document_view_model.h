@@ -11,6 +11,11 @@
 namespace pdfview {
 namespace core {
 
+struct ScaleChangeState {
+  ViewportAnchor anchor;
+  int anchor_page_index = 0;
+};
+
 class DocumentViewModel {
  public:
   DocumentViewModel();
@@ -45,6 +50,8 @@ class DocumentViewModel {
 
   void relayout();
   void set_scroll_origin(float x, float y);
+  ScaleChangeState capture_scale_change_state() const;
+  float restored_scroll_y_for_scale_change(const ScaleChangeState& state);
   ViewportAnchor capture_viewport_anchor() const;
   float restored_scroll_y_for_anchor(const ViewportAnchor& anchor) const;
   ViewRect visible_rect() const;

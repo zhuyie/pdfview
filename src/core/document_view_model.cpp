@@ -123,6 +123,18 @@ void DocumentViewModel::set_scroll_origin(float x, float y) {
   view_state_.scroll_y = y;
 }
 
+ScaleChangeState DocumentViewModel::capture_scale_change_state() const {
+  ScaleChangeState state;
+  state.anchor = capture_viewport_anchor();
+  state.anchor_page_index = state.anchor.page_index;
+  return state;
+}
+
+float DocumentViewModel::restored_scroll_y_for_scale_change(const ScaleChangeState& state) {
+  view_state_.current_page = state.anchor_page_index;
+  return restored_scroll_y_for_anchor(state.anchor);
+}
+
 ViewportAnchor DocumentViewModel::capture_viewport_anchor() const {
   return pdfview::core::capture_viewport_anchor(layout_result_.page_frames, view_state_.scroll_y);
 }

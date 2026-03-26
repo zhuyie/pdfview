@@ -316,6 +316,31 @@ bool TestDocumentViewModelViewportAnchorRestore() {
                 "view model should restore the captured viewport anchor after relayout");
 }
 
+bool TestDocumentViewModelScaleChangeState() {
+  std::vector<pdfview::core::PageSize> page_sizes(1);
+  page_sizes[0].width = 400.0f;
+  page_sizes[0].height = 1200.0f;
+
+  pdfview::core::DocumentPtr document(new FakeDocument(page_sizes));
+  pdfview::core::DocumentViewModel view_model(document);
+  view_model.set_viewport_size(500.0f, 300.0f);
+  view_model.mutable_view_state()->scale_mode = pdfview::core::ScaleMode::Manual;
+  view_model.mutable_view_state()->zoom = 3.0f;
+  view_model.relayout();
+  view_model.set_scroll_origin(0.0f, 1160.0f);
+
+  const pdfview::core::ScaleChangeState state = view_model.capture_scale_change_state();
+
+  view_model.mutable_view_state()->zoom = 1.0f;
+  view_model.relayout();
+
+  return Expect(state.anchor_page_index == 0, "scale change state should keep the anchored page index") &&
+         Expect(NearlyEqual(view_model.restored_scroll_y_for_scale_change(state), 400.0f),
+                "scale change state should restore the target scroll position after relayout") &&
+         Expect(view_model.view_state().current_page == 0,
+                "scale change restore should keep the current page anchored to the captured page");
+}
+
 bool TestDocumentViewModelScrollYForCurrentPage() {
   std::vector<pdfview::core::PageSize> page_sizes(3);
   for (int index = 0; index < 3; ++index) {
@@ -538,6 +563,9 @@ int main() {
     return 1;
   }
   if (!TestDocumentViewModelViewportAnchorRestore()) {
+    return 1;
+  }
+  if (!TestDocumentViewModelScaleChangeState()) {
     return 1;
   }
   if (!TestDocumentViewModelScrollYForCurrentPage()) {

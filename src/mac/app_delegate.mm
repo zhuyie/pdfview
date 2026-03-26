@@ -644,8 +644,8 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
   [self updateCurrentPageFromScrollForContext:context];
 
   const NSRect visibleBounds = [[context->scrollView_ contentView] bounds];
-  const pdfview::core::ViewportAnchor anchor = context->viewModel_.capture_viewport_anchor();
-  const int anchorPageIndex = anchor.page_index;
+  const pdfview::core::ScaleChangeState scaleChangeState =
+      context->viewModel_.capture_scale_change_state();
 
   updateMode(context);
   if (invalidateRenderedPages) {
@@ -654,12 +654,12 @@ double MillisecondsSince(const std::chrono::steady_clock::time_point& start) {
 
   suppressScrollTracking_ = YES;
   [self renderTabContext:context];
-  context->viewModel_.mutable_view_state()->current_page = anchorPageIndex;
 
   const pdfview::core::ViewRect newPageRect = context->viewModel_.current_page_rect();
   if (newPageRect.height > 0.0f) {
     NSClipView* clipView = [context->scrollView_ contentView];
-    const CGFloat targetOriginY = context->viewModel_.restored_scroll_y_for_anchor(anchor);
+    const CGFloat targetOriginY =
+        context->viewModel_.restored_scroll_y_for_scale_change(scaleChangeState);
     [clipView scrollToPoint:NSMakePoint(visibleBounds.origin.x, targetOriginY)];
     [context->scrollView_ reflectScrolledClipView:clipView];
     context->viewModel_.set_scroll_origin([clipView bounds].origin.x, [clipView bounds].origin.y);
