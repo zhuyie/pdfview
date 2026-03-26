@@ -60,6 +60,7 @@ class Document {
                                   float page_y,
                                   float x_tolerance,
                                   float y_tolerance) const = 0;
+  virtual int nearest_text_index_at_point(int page_index, float page_x, float page_y) const = 0;
   virtual int page_text_char_count(int page_index) const = 0;
   virtual PageTextSelection text_selection_for_range(int page_index,
                                                      int start_index,

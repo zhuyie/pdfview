@@ -63,6 +63,31 @@
                                                           location:location
                                                            context:context];
   if (charIndex < 0) {
+    if (!context->textSelection_.anchor.valid()) {
+      return;
+    }
+
+    float pageX = 0.0f;
+    float pageY = 0.0f;
+    if (!pdfview::core::page_point_from_page_view_point(
+            location.x,
+            location.y,
+            context->viewModel_.page_sizes()[pageIndex],
+            context->viewModel_.page_frames()[pageIndex],
+            &pageX,
+            &pageY)) {
+      return;
+    }
+
+    const int fallbackCharIndex =
+        context->viewModel_.document()->nearest_text_index_at_point(pageIndex, pageX, pageY);
+    if (fallbackCharIndex < 0) {
+      return;
+    }
+
+    [self applyTextSelectionForFocusPageIndex:pageIndex
+                                    charIndex:fallbackCharIndex
+                                      context:context];
     return;
   }
 

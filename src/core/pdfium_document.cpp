@@ -1,6 +1,7 @@
 #include "core/pdfium_document.h"
 
 #include <codecvt>
+#include <cmath>
 #include <locale>
 #include <memory>
 #include <mutex>
@@ -88,6 +89,106 @@ std::vector<unsigned int> LoadPageCodepoints(FPDF_TEXTPAGE text_page, int char_c
     codepoints[index] = FPDFText_GetUnicode(text_page, index);
   }
   return codepoints;
+}
+
+struct TextCharBox {
+  int index = -1;
+  double left = 0.0;
+  double right = 0.0;
+  double bottom = 0.0;
+  double top = 0.0;
+};
+
+struct TextLineSpan {
+  int start_index = -1;
+  int end_index = -1;
+  double left = 0.0;
+  double right = 0.0;
+  double bottom = 0.0;
+  double top = 0.0;
+};
+
+bool CharBoxesBelongToSameLine(const TextCharBox& lhs, const TextCharBox& rhs) {
+  const double overlap = std::min(lhs.top, rhs.top) - std::max(lhs.bottom, rhs.bottom);
+  const double lhs_height = std::max(lhs.top - lhs.bottom, 0.0);
+  const double rhs_height = std::max(rhs.top - rhs.bottom, 0.0);
+  const double min_height = std::min(lhs_height, rhs_height);
+  if (min_height > 0.0 && overlap >= min_height * 0.5) {
+    return true;
+  }
+
+  const double lhs_center_y = (lhs.top + lhs.bottom) * 0.5;
+  const double rhs_center_y = (rhs.top + rhs.bottom) * 0.5;
+  const double avg_height = (lhs_height + rhs_height) * 0.5;
+  return avg_height > 0.0 && std::fabs(lhs_center_y - rhs_center_y) <= avg_height * 0.6;
+}
+
+std::vector<TextCharBox> LoadPageCharBoxes(FPDF_TEXTPAGE text_page, int char_count) {
+  std::vector<TextCharBox> char_boxes;
+  if (char_count <= 0) {
+    return char_boxes;
+  }
+
+  char_boxes.reserve(static_cast<size_t>(char_count));
+  for (int index = 0; index < char_count; ++index) {
+    TextCharBox char_box;
+    char_box.index = index;
+    if (!FPDFText_GetCharBox(text_page,
+                             index,
+                             &char_box.left,
+                             &char_box.right,
+                             &char_box.bottom,
+                             &char_box.top)) {
+      continue;
+    }
+    if (char_box.right < char_box.left) {
+      std::swap(char_box.left, char_box.right);
+    }
+    if (char_box.top < char_box.bottom) {
+      std::swap(char_box.top, char_box.bottom);
+    }
+    char_boxes.push_back(char_box);
+  }
+
+  return char_boxes;
+}
+
+std::vector<TextLineSpan> BuildTextLineSpans(const std::vector<TextCharBox>& char_boxes) {
+  std::vector<TextLineSpan> line_spans;
+  for (size_t index = 0; index < char_boxes.size(); ++index) {
+    const TextCharBox& char_box = char_boxes[index];
+    if (line_spans.empty() ||
+        !CharBoxesBelongToSameLine(char_boxes[index - 1], char_box)) {
+      TextLineSpan line_span;
+      line_span.start_index = char_box.index;
+      line_span.end_index = char_box.index;
+      line_span.left = char_box.left;
+      line_span.right = char_box.right;
+      line_span.bottom = char_box.bottom;
+      line_span.top = char_box.top;
+      line_spans.push_back(line_span);
+      continue;
+    }
+
+    TextLineSpan& line_span = line_spans.back();
+    line_span.end_index = char_box.index;
+    line_span.left = std::min(line_span.left, char_box.left);
+    line_span.right = std::max(line_span.right, char_box.right);
+    line_span.bottom = std::min(line_span.bottom, char_box.bottom);
+    line_span.top = std::max(line_span.top, char_box.top);
+  }
+
+  return line_spans;
+}
+
+double VerticalDistanceToLine(const TextLineSpan& line_span, double page_y) {
+  if (page_y >= line_span.bottom && page_y <= line_span.top) {
+    return 0.0;
+  }
+  if (page_y > line_span.top) {
+    return page_y - line_span.top;
+  }
+  return line_span.bottom - page_y;
 }
 
 class PdfiumDocument final : public Document {
@@ -202,6 +303,90 @@ class PdfiumDocument final : public Document {
                                       page_y,
                                       x_tolerance,
                                       y_tolerance);
+  }
+
+  int nearest_text_index_at_point(int page_index, float page_x, float page_y) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int document_page_count = FPDF_GetPageCount(handle_);
+    if (page_index < 0 || page_index >= document_page_count) {
+      return -1;
+    }
+
+    ScopedPdfPage page(handle_, page_index);
+    if (page.get() == NULL) {
+      return -1;
+    }
+
+    ScopedPdfTextPage text_page(page.get());
+    if (text_page.get() == NULL) {
+      return -1;
+    }
+
+    const int char_count = std::max(FPDFText_CountChars(text_page.get()), 0);
+    if (char_count <= 0) {
+      return -1;
+    }
+
+    const std::vector<TextCharBox> char_boxes = LoadPageCharBoxes(text_page.get(), char_count);
+    if (char_boxes.empty()) {
+      return -1;
+    }
+    const std::vector<TextLineSpan> line_spans = BuildTextLineSpans(char_boxes);
+    if (line_spans.empty()) {
+      return -1;
+    }
+
+    const double topmost_top = line_spans.front().top;
+    const double bottommost_bottom = line_spans.back().bottom;
+    if (static_cast<double>(page_y) > topmost_top) {
+      return line_spans.front().start_index;
+    }
+    if (static_cast<double>(page_y) < bottommost_bottom) {
+      return line_spans.back().end_index;
+    }
+
+    int best_line_index = -1;
+    double best_vertical_distance = 0.0;
+    for (size_t index = 0; index < line_spans.size(); ++index) {
+      const double vertical_distance =
+          VerticalDistanceToLine(line_spans[index], static_cast<double>(page_y));
+      if (best_line_index < 0 || vertical_distance < best_vertical_distance) {
+        best_line_index = static_cast<int>(index);
+        best_vertical_distance = vertical_distance;
+      }
+    }
+    if (best_line_index < 0) {
+      return -1;
+    }
+
+    const TextLineSpan& line_span = line_spans[best_line_index];
+    if (static_cast<double>(page_x) <= line_span.left) {
+      return line_span.start_index;
+    }
+    if (static_cast<double>(page_x) >= line_span.right) {
+      return line_span.end_index;
+    }
+
+    int nearest_index = line_span.start_index;
+    double nearest_distance_x = 0.0;
+    bool has_nearest = false;
+    for (size_t index = 0; index < char_boxes.size(); ++index) {
+      const TextCharBox& char_box = char_boxes[index];
+      if (char_box.index < line_span.start_index || char_box.index > line_span.end_index) {
+        continue;
+      }
+
+      const double clamped_x =
+          std::max(std::min(static_cast<double>(page_x), char_box.right), char_box.left);
+      const double distance_x = std::fabs(static_cast<double>(page_x) - clamped_x);
+      if (!has_nearest || distance_x < nearest_distance_x) {
+        nearest_index = char_box.index;
+        nearest_distance_x = distance_x;
+        has_nearest = true;
+      }
+    }
+
+    return nearest_index;
   }
 
   int page_text_char_count(int page_index) const override {

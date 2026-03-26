@@ -50,6 +50,10 @@ class FakeDocument : public pdfview::core::Document {
     return -1;
   }
 
+  int nearest_text_index_at_point(int, float, float) const override {
+    return -1;
+  }
+
   int page_text_char_count(int page_index) const override {
     if (page_index < 0 || page_index >= static_cast<int>(page_sizes_.size())) {
       return 0;
