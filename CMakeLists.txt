@@ -88,6 +88,16 @@ if(BUILD_TESTING)
     )
 endif()
 
+add_executable(pdf_debug_tool
+    tools/pdf_debug_tool/args.cpp
+    tools/pdf_debug_tool/bitmap_writer.cpp
+    tools/pdf_debug_tool/command_registry.cpp
+    tools/pdf_debug_tool/main.cpp
+    tools/pdf_debug_tool/render_page_command.cpp
+)
+target_link_libraries(pdf_debug_tool PRIVATE pdfview_core)
+pdfview_bundle_pdfium_runtime(pdf_debug_tool)
+
 if(APPLE)
     enable_language(OBJCXX)
     set(PDFVIEW_MAC_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/pdfview.icns")
