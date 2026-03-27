@@ -71,7 +71,6 @@ struct DocumentPermissionsInfo {
 };
 
 struct DocumentInfo {
-  long long file_size_bytes = -1;
   std::string pdf_version;
   unsigned long permissions = 0;
   unsigned long user_permissions = 0;

@@ -77,9 +77,6 @@ int RunDocInfo(const std::vector<std::string>& args) {
   const int page_count = open_result.document->page_count();
 
   std::cout << "input=" << input_path << "\n";
-  if (info.file_size_bytes >= 0) {
-    std::cout << "file_size_bytes=" << info.file_size_bytes << "\n";
-  }
   std::cout << "pdf_version=" << (info.pdf_version.empty() ? "unknown" : info.pdf_version)
             << "\n";
   std::cout << "security_handler_revision=" << info.security_handler_revision << "\n";

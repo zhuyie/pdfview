@@ -2,7 +2,6 @@
 
 #include <codecvt>
 #include <cmath>
-#include <fstream>
 #include <locale>
 #include <memory>
 #include <mutex>
@@ -37,14 +36,6 @@ PdfiumLibrary& pdfium_library() {
 }
 
 std::string Utf16ToUtf8(const std::vector<unsigned short>& text);
-
-long long ReadFileSizeBytes(const std::string& path) {
-  std::ifstream input(path.c_str(), std::ios::binary | std::ios::ate);
-  if (!input.is_open()) {
-    return -1;
-  }
-  return static_cast<long long>(input.tellg());
-}
 
 std::string ReadMetaText(FPDF_DOCUMENT document, const char* tag) {
   const unsigned long byte_count = FPDF_GetMetaText(document, tag, NULL, 0);
@@ -267,7 +258,6 @@ class PdfiumDocument final : public Document {
     std::lock_guard<std::mutex> lock(mutex_);
 
     DocumentInfo info;
-    info.file_size_bytes = ReadFileSizeBytes(path_);
     info.permissions = FPDF_GetDocPermissions(handle_);
     info.user_permissions = FPDF_GetDocUserPermissions(handle_);
     info.security_handler_revision = FPDF_GetSecurityHandlerRevision(handle_);
