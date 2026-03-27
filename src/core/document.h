@@ -48,10 +48,44 @@ struct PageTextSelectionSpan {
   std::vector<PageTextRect> rects;
 };
 
+struct DocumentSummaryInfo {
+  std::string title;
+  std::string author;
+  std::string subject;
+  std::string keywords;
+  std::string creator;
+  std::string producer;
+  std::string creation_date;
+  std::string mod_date;
+};
+
+struct DocumentPermissionsInfo {
+  bool can_print = false;
+  bool can_print_high_quality = false;
+  bool can_modify = false;
+  bool can_copy = false;
+  bool can_annotate = false;
+  bool can_fill_forms = false;
+  bool can_copy_for_accessibility = false;
+  bool can_assemble = false;
+};
+
+struct DocumentInfo {
+  long long file_size_bytes = -1;
+  std::string pdf_version;
+  unsigned long permissions = 0;
+  unsigned long user_permissions = 0;
+  int security_handler_revision = -1;
+  DocumentPermissionsInfo permissions_info;
+  DocumentPermissionsInfo user_permissions_info;
+  DocumentSummaryInfo summary_info;
+};
+
 class Document {
  public:
   virtual ~Document() = default;
 
+  virtual DocumentInfo info() const = 0;
   virtual int page_count() const = 0;
   virtual PageSize page_size(int page_index) const = 0;
   virtual RenderPageResult render_page(int page_index, float scale) const = 0;

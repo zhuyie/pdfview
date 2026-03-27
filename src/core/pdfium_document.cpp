@@ -2,12 +2,14 @@
 
 #include <codecvt>
 #include <cmath>
+#include <fstream>
 #include <locale>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include "fpdf_doc.h"
 #include "core/text_selection.h"
 #include "fpdf_edit.h"
 #include "fpdf_text.h"
@@ -32,6 +34,66 @@ class PdfiumLibrary {
 PdfiumLibrary& pdfium_library() {
   static PdfiumLibrary library;
   return library;
+}
+
+std::string Utf16ToUtf8(const std::vector<unsigned short>& text);
+
+long long ReadFileSizeBytes(const std::string& path) {
+  std::ifstream input(path.c_str(), std::ios::binary | std::ios::ate);
+  if (!input.is_open()) {
+    return -1;
+  }
+  return static_cast<long long>(input.tellg());
+}
+
+std::string ReadMetaText(FPDF_DOCUMENT document, const char* tag) {
+  const unsigned long byte_count = FPDF_GetMetaText(document, tag, NULL, 0);
+  if (byte_count < 2) {
+    return std::string();
+  }
+
+  std::vector<unsigned short> buffer(byte_count / 2, 0);
+  if (FPDF_GetMetaText(document, tag, &buffer[0], byte_count) != byte_count) {
+    return std::string();
+  }
+  return Utf16ToUtf8(buffer);
+}
+
+std::string FormatPdfVersion(int version) {
+  if (version < 10) {
+    return std::string();
+  }
+  return std::to_string(version / 10) + "." + std::to_string(version % 10);
+}
+
+bool IsPermissionBitEnabled(unsigned long permissions, int bit_position) {
+  if (bit_position <= 0 || bit_position > 32) {
+    return false;
+  }
+  return (permissions & (1UL << (bit_position - 1))) != 0;
+}
+
+DocumentPermissionsInfo DecodePermissions(unsigned long permissions, int revision) {
+  DocumentPermissionsInfo decoded;
+  decoded.can_print = IsPermissionBitEnabled(permissions, 3);
+  decoded.can_modify = IsPermissionBitEnabled(permissions, 4);
+  decoded.can_copy = IsPermissionBitEnabled(permissions, 5);
+  decoded.can_annotate = IsPermissionBitEnabled(permissions, 6);
+
+  if (revision >= 3) {
+    decoded.can_fill_forms = IsPermissionBitEnabled(permissions, 9);
+    decoded.can_copy_for_accessibility = IsPermissionBitEnabled(permissions, 10);
+    decoded.can_assemble = IsPermissionBitEnabled(permissions, 11);
+    decoded.can_print_high_quality =
+        decoded.can_print && IsPermissionBitEnabled(permissions, 12);
+  } else {
+    decoded.can_fill_forms = decoded.can_annotate;
+    decoded.can_copy_for_accessibility = decoded.can_copy;
+    decoded.can_assemble = decoded.can_modify;
+    decoded.can_print_high_quality = decoded.can_print;
+  }
+
+  return decoded;
 }
 
 class ScopedPdfPage {
@@ -193,12 +255,40 @@ double VerticalDistanceToLine(const TextLineSpan& line_span, double page_y) {
 
 class PdfiumDocument final : public Document {
  public:
-  explicit PdfiumDocument(FPDF_DOCUMENT handle) : handle_(handle) {}
+  PdfiumDocument(const std::string& path, FPDF_DOCUMENT handle) : path_(path), handle_(handle) {}
 
   ~PdfiumDocument() override {
     if (handle_ != nullptr) {
       FPDF_CloseDocument(handle_);
     }
+  }
+
+  DocumentInfo info() const override {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    DocumentInfo info;
+    info.file_size_bytes = ReadFileSizeBytes(path_);
+    info.permissions = FPDF_GetDocPermissions(handle_);
+    info.user_permissions = FPDF_GetDocUserPermissions(handle_);
+    info.security_handler_revision = FPDF_GetSecurityHandlerRevision(handle_);
+    info.permissions_info = DecodePermissions(info.permissions, info.security_handler_revision);
+    info.user_permissions_info =
+        DecodePermissions(info.user_permissions, info.security_handler_revision);
+
+    int file_version = 0;
+    if (FPDF_GetFileVersion(handle_, &file_version)) {
+      info.pdf_version = FormatPdfVersion(file_version);
+    }
+
+    info.summary_info.title = ReadMetaText(handle_, "Title");
+    info.summary_info.author = ReadMetaText(handle_, "Author");
+    info.summary_info.subject = ReadMetaText(handle_, "Subject");
+    info.summary_info.keywords = ReadMetaText(handle_, "Keywords");
+    info.summary_info.creator = ReadMetaText(handle_, "Creator");
+    info.summary_info.producer = ReadMetaText(handle_, "Producer");
+    info.summary_info.creation_date = ReadMetaText(handle_, "CreationDate");
+    info.summary_info.mod_date = ReadMetaText(handle_, "ModDate");
+    return info;
   }
 
   int page_count() const override {
@@ -510,6 +600,7 @@ class PdfiumDocument final : public Document {
     return selection;
   }
 
+  std::string path_;
   FPDF_DOCUMENT handle_ = nullptr;
   mutable std::mutex mutex_;
 };
@@ -529,7 +620,7 @@ OpenDocumentResult open_pdfium_document(const std::string& path) {
   }
 
   OpenDocumentResult result;
-  result.document = std::make_shared<PdfiumDocument>(document);
+  result.document = std::make_shared<PdfiumDocument>(path, document);
   return result;
 }
 

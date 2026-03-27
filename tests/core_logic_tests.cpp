@@ -33,6 +33,10 @@ class FakeDocument : public pdfview::core::Document {
         page_char_counts_(page_sizes.size(), 0),
         page_range_selections_(page_sizes.size()) {}
 
+  pdfview::core::DocumentInfo info() const override {
+    return pdfview::core::DocumentInfo();
+  }
+
   int page_count() const override { return static_cast<int>(page_sizes_.size()); }
 
   pdfview::core::PageSize page_size(int page_index) const override {

@@ -2,6 +2,7 @@
 
 #include <iostream>
 
+#include "doc_info_command.h"
 #include "render_page_command.h"
 
 namespace pdfview {
@@ -9,6 +10,7 @@ namespace tools {
 
 std::vector<DebugCommand> build_debug_commands() {
   std::vector<DebugCommand> commands;
+  commands.push_back(doc_info_command());
   commands.push_back(render_page_command());
   return commands;
 }

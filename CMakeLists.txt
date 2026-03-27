@@ -92,9 +92,11 @@ add_executable(pdf_debug_tool
     tools/pdf_debug_tool/args.cpp
     tools/pdf_debug_tool/bitmap_writer.cpp
     tools/pdf_debug_tool/command_registry.cpp
+    tools/pdf_debug_tool/doc_info_command.cpp
     tools/pdf_debug_tool/main.cpp
     tools/pdf_debug_tool/render_page_command.cpp
 )
+target_include_directories(pdf_debug_tool PRIVATE "${PDFIUM_INCLUDE_DIR}")
 target_link_libraries(pdf_debug_tool PRIVATE pdfview_core)
 pdfview_bundle_pdfium_runtime(pdf_debug_tool)
 
