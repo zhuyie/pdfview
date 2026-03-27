@@ -11,12 +11,6 @@ namespace tools {
 
 namespace {
 
-void PrintSummaryField(const std::string& value, const char* label) {
-  if (!value.empty()) {
-    std::cout << "summary_info." << label << "=" << value << "\n";
-  }
-}
-
 void PrintPermissionField(const char* label, bool value) {
   std::cout << "  " << label << "=" << (value ? "true" : "false") << "\n";
 }
@@ -34,6 +28,24 @@ void PrintPermissionsBlock(const char* label,
   PrintPermissionField("can_copy_for_accessibility",
                        permissions.can_copy_for_accessibility);
   PrintPermissionField("can_assemble", permissions.can_assemble);
+}
+
+void PrintSummaryField(const char* label, const std::string& value) {
+  if (!value.empty()) {
+    std::cout << "  " << label << "=" << value << "\n";
+  }
+}
+
+void PrintSummaryInfoBlock(const pdfview::core::DocumentSummaryInfo& summary_info) {
+  std::cout << "summary_info\n";
+  PrintSummaryField("title", summary_info.title);
+  PrintSummaryField("author", summary_info.author);
+  PrintSummaryField("subject", summary_info.subject);
+  PrintSummaryField("keywords", summary_info.keywords);
+  PrintSummaryField("creator", summary_info.creator);
+  PrintSummaryField("producer", summary_info.producer);
+  PrintSummaryField("creation_date", summary_info.creation_date);
+  PrintSummaryField("mod_date", summary_info.mod_date);
 }
 
 int RunDocInfo(const std::vector<std::string>& args) {
@@ -75,18 +87,12 @@ int RunDocInfo(const std::vector<std::string>& args) {
   PrintPermissionsBlock("user_permissions",
                         info.user_permissions,
                         info.user_permissions_info);
-  std::cout << "page_count=" << page_count << "\n";
-  PrintSummaryField(info.summary_info.title, "title");
-  PrintSummaryField(info.summary_info.author, "author");
-  PrintSummaryField(info.summary_info.subject, "subject");
-  PrintSummaryField(info.summary_info.keywords, "keywords");
-  PrintSummaryField(info.summary_info.creator, "creator");
-  PrintSummaryField(info.summary_info.producer, "producer");
-  PrintSummaryField(info.summary_info.creation_date, "creation_date");
-  PrintSummaryField(info.summary_info.mod_date, "mod_date");
+  PrintSummaryInfoBlock(info.summary_info);
+  std::cout << "pages\n";
+  std::cout << "  count=" << page_count << "\n";
   for (int page_index = 0; page_index < page_count; ++page_index) {
     const pdfview::core::PageSize page_size = open_result.document->page_size(page_index);
-    std::cout << "page[" << page_index << "]"
+    std::cout << "  page[" << page_index << "]"
               << " width=" << page_size.width
               << " height=" << page_size.height << "\n";
   }
